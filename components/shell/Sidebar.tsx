@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Compass, Sparkles, TrendingUp, BarChart3, Settings } from "lucide-react";
@@ -21,9 +22,14 @@ export function Sidebar() {
   return (
     <aside className="w-[240px] shrink-0 border-r border-[var(--color-border)] bg-[var(--color-surface)]/60 backdrop-blur-sm h-screen sticky top-0 flex flex-col">
       <div className="p-5 flex items-center gap-3">
-        <div className="h-9 w-9 rounded-lg bg-[var(--color-accent)] flex items-center justify-center text-white font-semibold shadow-[0_0_24px_rgba(0,161,224,0.35)]">
-          A
-        </div>
+        <Image
+          src="/logos/adoptify.png"
+          alt="Adoptify"
+          width={36}
+          height={36}
+          className="h-9 w-9 object-contain drop-shadow-[0_0_24px_rgba(0,161,224,0.35)]"
+          priority
+        />
         <div className="flex flex-col">
           <span className="text-sm font-semibold tracking-tight">Adoptify</span>
           <span className="text-[10px] uppercase tracking-[0.2em] text-[var(--color-text-subtle)]">Agentforce</span>

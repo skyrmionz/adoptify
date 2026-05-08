@@ -50,9 +50,14 @@ export default function LoginPage() {
         className="w-full max-w-md surface-card p-8"
       >
         <div className="flex items-center gap-3 mb-8">
-          <div className="h-9 w-9 rounded-lg bg-[var(--color-accent)] flex items-center justify-center text-white font-semibold">
-            A
-          </div>
+          <Image
+            src="/logos/adoptify.png"
+            alt="Adoptify"
+            width={36}
+            height={36}
+            className="h-9 w-9 object-contain"
+            priority
+          />
           <div>
             <div className="text-lg font-semibold tracking-tight">Adoptify</div>
             <div className="text-xs text-[var(--color-text-muted)]">Agentforce adoption companion</div>
