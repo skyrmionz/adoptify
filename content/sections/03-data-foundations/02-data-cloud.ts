@@ -27,6 +27,35 @@ export const dataCloud: Mission = {
       ],
     },
     {
+      kind: "coderPrompt",
+      title: "Map your Data Cloud topology with a coding agent",
+      subtitle: "Get a one-page summary of streams, DLOs, DMOs, and identity rules without clicking through Data Cloud setup.",
+      prompts: [
+        {
+          id: "dc.topology",
+          title: "Inventory Data Cloud topology",
+          goal: "List Data Streams, DLOs, DMOs, and Identity Resolution rulesets in plain English.",
+          tools: ["claude-code", "sf-cli", "data-360"],
+          prompt: `Use the Salesforce CLI (or Data Cloud CLI plugin if installed) to inventory my Data Cloud setup on org \${ORG_ALIAS}.
+
+1. Data Streams:
+   sf data query --use-tooling-api --target-org \${ORG_ALIAS} --query "SELECT Id, DeveloperName, Status FROM MktDataStream LIMIT 50"
+
+2. Data Lake Objects (DLOs):
+   sf data query --use-tooling-api --target-org \${ORG_ALIAS} --query "SELECT Id, DeveloperName FROM MktDataLakeObject LIMIT 50"
+
+3. Data Model Objects (DMOs):
+   sf data query --use-tooling-api --target-org \${ORG_ALIAS} --query "SELECT Id, DeveloperName FROM MktDataModelObject LIMIT 50"
+
+4. Identity Resolution rulesets:
+   sf data query --use-tooling-api --target-org \${ORG_ALIAS} --query "SELECT Id, DeveloperName, Status FROM MktIdentityResolutionRuleset"
+
+Then produce a markdown topology that walks me from sources -> streams -> DLOs -> DMOs -> Unified Individuals, calling out gaps (e.g. DLOs not yet mapped to a DMO).`,
+          notes: "Some queries require the Data Cloud add-on; if a query errors with 'object does not exist' it means Data Cloud is not provisioned in this org.",
+        },
+      ],
+    },
+    {
       kind: "setupChecklist",
       title: "Verify your Data Cloud foundation",
       items: [

@@ -34,6 +34,23 @@ export type ChannelOption = {
   scannerPath?: string; // optional dot-path on Snapshot to auto-detect "ready"
 };
 
+export type CoderTool =
+  | "sf-cli"
+  | "adlc"
+  | "data-360"
+  | "metadata-api"
+  | "claude-code"
+  | "cursor";
+
+export type CoderPrompt = {
+  id: string;
+  title: string;
+  goal: string; // single-line description
+  tools: CoderTool[];
+  prompt: string; // multi-line; rendered in a copyable code block
+  notes?: string;
+};
+
 export type Step =
   | { kind: "framework"; title: string; cards: FrameworkCard[]; subtitle?: string }
   | { kind: "embed"; title: string; provider: "youtube" | "url" | "iframe"; src: string; description?: string }
@@ -47,7 +64,8 @@ export type Step =
   | { kind: "setupChecklist"; title: string; description?: string; items: SetupCheckItem[] }
   | { kind: "actionInventory"; title: string; description?: string }
   | { kind: "channelPlanner"; title: string; description?: string; options: ChannelOption[] }
-  | { kind: "promptDesigner"; title: string; description?: string };
+  | { kind: "promptDesigner"; title: string; description?: string }
+  | { kind: "coderPrompt"; title: string; subtitle?: string; prompts: CoderPrompt[] };
 
 export type FrameworkCard = {
   title: string;

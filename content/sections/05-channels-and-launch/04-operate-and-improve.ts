@@ -30,6 +30,28 @@ export const operateAndImprove: Mission = {
       ],
     },
     {
+      kind: "coderPrompt",
+      title: "Weekly transcript review, automated",
+      subtitle: "Have a coding agent pull recent conversations, cluster failures, and propose Topic / Action edits.",
+      prompts: [
+        {
+          id: "ops.transcript-review",
+          title: "Pull and triage the last week's conversations",
+          goal: "Review escalated and negative-feedback transcripts; propose 3 concrete improvements.",
+          tools: ["claude-code", "sf-cli"],
+          prompt: `Review the last 7 days of agent conversations on org \${ORG_ALIAS}.
+
+Steps:
+1. Pull recent MessagingSession rows: sf data query --target-org \${ORG_ALIAS} --query "SELECT Id, EndUserContactId, EndTime, Status FROM MessagingSession WHERE EndTime = LAST_N_DAYS:7"
+2. For each session, pull its ConversationEntry rows and reconstruct the transcript.
+3. Bucket sessions: clean / escalated / negative-feedback / action-failed.
+4. From the failure buckets, cluster by likely root cause (mis-routed Topic, missing Action, hallucination, permission issue).
+5. Propose 3 specific improvements: which Classification Description to tighten, which Action description to fix, which test to add. Cite a specific transcript Id with each.
+6. Optional: open a draft PR per recommendation against the corresponding metadata file.`,
+        },
+      ],
+    },
+    {
       kind: "setupChecklist",
       title: "Operate & improve checklist",
       items: [

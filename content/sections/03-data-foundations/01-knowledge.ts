@@ -26,6 +26,34 @@ export const knowledgeDeep: Mission = {
       ],
     },
     {
+      kind: "coderPrompt",
+      title: "Have a coding agent inspect your Knowledge corpus",
+      subtitle: "Useful when you want a fast read on coverage, freshness, and category gaps before authoring more articles.",
+      prompts: [
+        {
+          id: "knowledge.audit",
+          title: "Audit your Knowledge corpus",
+          goal: "Summarize article counts by status, top data categories, and freshness on org \\${ORG_ALIAS}.",
+          tools: ["claude-code", "sf-cli"],
+          prompt: `Use the Salesforce CLI to audit my Knowledge corpus on org \${ORG_ALIAS}. Run these queries and summarize the results in markdown:
+
+1. Counts by publish status:
+   sf data query --target-org \${ORG_ALIAS} --query "SELECT PublishStatus, COUNT(Id) ct FROM Knowledge__kav GROUP BY PublishStatus"
+
+2. Top 10 most recently updated published articles:
+   sf data query --target-org \${ORG_ALIAS} --query "SELECT Id, Title, LastPublishedDate FROM Knowledge__kav WHERE PublishStatus = 'Online' ORDER BY LastPublishedDate DESC LIMIT 10"
+
+3. Articles published more than 180 days ago (potential staleness):
+   sf data query --target-org \${ORG_ALIAS} --query "SELECT COUNT(Id) FROM Knowledge__kav WHERE PublishStatus = 'Online' AND LastPublishedDate < LAST_N_DAYS:180"
+
+4. Data category usage:
+   sf data query --target-org \${ORG_ALIAS} --query "SELECT DataCategoryName, COUNT(Id) ct FROM Knowledge__DataCategorySelection GROUP BY DataCategoryName ORDER BY COUNT(Id) DESC LIMIT 20"
+
+Produce a single markdown report with: total published, % older than 180 days, top categories, and 3 specific recommendations for what to write next or retire.`,
+        },
+      ],
+    },
+    {
       kind: "setupChecklist",
       title: "Verify Knowledge readiness",
       items: [

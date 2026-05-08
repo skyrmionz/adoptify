@@ -16,6 +16,7 @@ import { SetupChecklistStep } from "./steps/SetupChecklist";
 import { ActionInventoryStep } from "./steps/ActionInventory";
 import { ChannelPlannerStep } from "./steps/ChannelPlanner";
 import { PromptDesignerStep } from "./steps/PromptDesigner";
+import { CoderPromptStep } from "./steps/CoderPrompt";
 import { cn } from "@/lib/utils";
 
 type Props = {
@@ -266,5 +267,7 @@ function StepBody({
       return <ChannelPlannerStep step={step} evidence={evidence} onEvidence={onEvidence} />;
     case "promptDesigner":
       return <PromptDesignerStep step={step} evidence={evidence} onEvidence={onEvidence} />;
+    case "coderPrompt":
+      return <CoderPromptStep step={step} />;
   }
 }

@@ -45,6 +45,38 @@ export const topics: Mission = {
       ],
     },
     {
+      kind: "coderPrompt",
+      title: "Have a coding agent scaffold a Topic for you",
+      subtitle: "Agent Script DX (ADLC) lets a coding agent create, preview, and deploy Agentforce topics from your repo.",
+      prompts: [
+        {
+          id: "topics.scaffold",
+          title: "Scaffold a new Topic from a use case",
+          goal: "Generate the GenAiPlugin metadata + classification description + scope + initial actions for a Topic.",
+          tools: ["claude-code", "adlc", "sf-cli"],
+          prompt: `You're working in a Salesforce DX project that has Agent Script DX (ADLC) installed. Help me scaffold a new Agentforce Topic for the use case below.
+
+USE CASE:
+\${PASTE_USE_CASE_FROM_MISSION_1}
+
+PRIMARY USERS:
+\${WHO_TALKS_TO_THE_AGENT}
+
+Steps:
+1. Run \`sf agent generate topic --name <DeveloperName> --output-dir force-app/main/default\` (or the equivalent ADLC command in this CLI version) to scaffold the Topic + GenAiPlugin metadata.
+2. Edit the generated GenAiPlugin XML:
+   - <classificationDescription>: a single, specific paragraph describing what user messages this topic handles. Use real user phrasings.
+   - <scope>: a tighter boundary statement.
+   - <instructions>: under 200 words. Define greeting, refusal, escalation behavior.
+3. Recommend 2-4 initial Actions (standard, Apex, or Flow). Stub the references in the XML.
+4. Run \`sf agent preview --topic <DeveloperName>\` to test classification on 5 sample utterances. Report routing accuracy.
+5. Open a PR titled "feat(agent): add <DeveloperName> topic" with the new files plus a short summary in the description.
+
+Do not deploy yet. We'll review locally first.`,
+        },
+      ],
+    },
+    {
       kind: "checklist",
       title: "Topic-design self-check",
       items: [

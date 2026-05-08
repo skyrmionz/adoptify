@@ -23,6 +23,32 @@ export const goLive: Mission = {
       ],
     },
     {
+      kind: "coderPrompt",
+      title: "Have a coding agent ship the activation",
+      subtitle: "Activate the BotVersion, bind it to your channels, and verify end-to-end without clicking through Setup.",
+      prompts: [
+        {
+          id: "live.activate",
+          title: "Activate a BotVersion and verify",
+          goal: "Activate the agent and confirm a working conversation hits MessagingSession.",
+          tools: ["claude-code", "adlc", "sf-cli"],
+          prompt: `Activate the agent named \${AGENT_NAME} on org \${ORG_ALIAS}.
+
+Steps:
+1. Confirm the latest BotVersion exists:
+   sf data query --use-tooling-api --target-org \${ORG_ALIAS} --query "SELECT Id, MasterLabel, Status FROM BotVersion WHERE BotDefinition.DeveloperName = '\${AGENT_NAME}' ORDER BY VersionNumber DESC LIMIT 1"
+2. Activate via Agent Script DX (or Tooling update if ADLC isn't installed):
+   sf agent activate --target-org \${ORG_ALIAS} --bot \${AGENT_NAME}
+   (Fallback: sf data update record --use-tooling-api --target-org \${ORG_ALIAS} --sobject BotVersion --record-id <Id> --values "Status=Active")
+3. Run a smoke conversation through the Agentforce API:
+   sf org open --target-org \${ORG_ALIAS} --path /lightning/setup/EinsteinCopilotStudio/home   (or use the Agentforce API endpoint)
+4. Confirm the smoke conversation produced a row:
+   sf data query --target-org \${ORG_ALIAS} --query "SELECT Id, CreatedDate FROM MessagingSession WHERE CreatedDate = TODAY ORDER BY CreatedDate DESC LIMIT 5"
+5. Output a one-line summary: BotVersion Id, activation timestamp, smoke session Id, latency.`,
+        },
+      ],
+    },
+    {
       kind: "setupChecklist",
       title: "Go-live verification",
       items: [
