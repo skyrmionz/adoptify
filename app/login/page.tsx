@@ -56,21 +56,17 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="relative min-h-screen flex items-center justify-center px-6 overflow-hidden">
-      {/* Salesforce-blue radial gradient backdrop */}
+    <main
+      className="relative min-h-screen flex items-center justify-center px-6 overflow-hidden"
+      style={{
+        background:
+          "radial-gradient(80% 60% at 50% 0%, rgba(0, 161, 224, 0.45) 0%, rgba(0, 161, 224, 0.12) 35%, rgba(11, 18, 32, 0) 70%), radial-gradient(60% 50% at 100% 100%, rgba(31, 224, 255, 0.18) 0%, rgba(11, 18, 32, 0) 60%), #0B1220",
+      }}
+    >
+      {/* Animated dotted glow — positioned within main, above body bg */}
       <div
         aria-hidden
-        className="absolute inset-0 -z-20"
-        style={{
-          background:
-            "radial-gradient(80% 60% at 50% 0%, rgba(0, 161, 224, 0.45) 0%, rgba(0, 161, 224, 0.12) 35%, rgba(11, 18, 32, 0) 70%), radial-gradient(60% 50% at 100% 100%, rgba(31, 224, 255, 0.18) 0%, rgba(11, 18, 32, 0) 60%), #0B1220",
-        }}
-      />
-
-      {/* Animated dotted glow */}
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-0 -z-10"
+        className="pointer-events-none absolute inset-0"
         style={{
           WebkitMaskImage:
             "radial-gradient(ellipse 90% 90% at 50% 50%, #000 0%, #000 60%, transparent 100%)",
