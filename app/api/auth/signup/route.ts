@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import {
   createSession,
   createUserWithPassword,
-  findUserByEmail,
   setSessionCookie,
 } from "@/lib/auth";
 
@@ -31,14 +30,15 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Passwords do not match" }, { status: 400 });
   }
 
-  const existing = await findUserByEmail(email);
-  if (existing) {
+  let user;
+  try {
+    user = await createUserWithPassword({ email, password, name: name || null });
+  } catch {
+    // ON CONFLICT clause didn't match (row exists with a non-null password) → returns no row
     return NextResponse.json({ error: "An account with that email already exists" }, { status: 409 });
   }
 
-  const user = await createUserWithPassword({ email, password, name: name || null });
   const sessionId = await createSession(user.id);
   await setSessionCookie(sessionId);
-
   return NextResponse.json({ ok: true, user });
 }

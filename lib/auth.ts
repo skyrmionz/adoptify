@@ -32,8 +32,14 @@ export async function createUserWithPassword(args: {
 }): Promise<SessionUser> {
   const email = normalizeEmail(args.email);
   const hash = await hashPassword(args.password);
+  // Upsert: if a passwordless row exists (left over from older auth flows),
+  // claim it by setting the password. If a row already has a password, reject.
   const row = await queryOne<SessionUser>(
     `INSERT INTO users (email, name, password_hash) VALUES ($1, $2, $3)
+     ON CONFLICT (email) DO UPDATE SET
+       password_hash = EXCLUDED.password_hash,
+       name = COALESCE(EXCLUDED.name, users.name)
+     WHERE users.password_hash IS NULL
      RETURNING id, email, name`,
     [email, args.name ?? null, hash],
   );
