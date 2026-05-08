@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import { getSessionUser } from "@/lib/auth";
 import { getSession } from "@/lib/chat-sessions";
-import { Chat, NewConversationButton } from "@/components/agent/Chat";
+import { Chat } from "@/components/agent/Chat";
 
 export const runtime = "nodejs";
 
@@ -15,18 +15,8 @@ export default async function AgentSessionPage(props: { params: Promise<Params> 
   if (!session) notFound();
 
   return (
-    <>
-      <div className="mb-6 flex items-start justify-between gap-4">
-        <div className="min-w-0">
-          <div className="text-xs uppercase tracking-[0.25em] text-[var(--color-text-muted)] mb-2 whitespace-nowrap">Conversation</div>
-          <h1 className="text-3xl font-semibold tracking-tight truncate">{session.title ?? "Untitled conversation"}</h1>
-          <p className="text-sm text-[var(--color-text-muted)] mt-2">
-            Started {new Date(session.created_at).toLocaleString()}
-          </p>
-        </div>
-        <NewConversationButton />
-      </div>
+    <div className="-mx-8 -my-10 h-[calc(100vh-3.5rem)] flex flex-col">
       <Chat sessionId={id} />
-    </>
+    </div>
   );
 }

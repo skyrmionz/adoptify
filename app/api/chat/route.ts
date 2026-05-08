@@ -57,7 +57,7 @@ export async function POST(req: Request) {
     session = await createSession(user.id);
   }
   const sessionId = session.id;
-  const wasNew = !body.sessionId || !session?.title;
+  const wasNew = !session.title;
 
   // Build the message history from the DB.
   const history = await listMessages(sessionId);
@@ -70,6 +70,17 @@ export async function POST(req: Request) {
   // Persist the user turn immediately so a refresh picks it up.
   await appendMessage(sessionId, "user", { role: "user", content: body.message });
 
+  // Set an immediate fallback title from the user's first message so the sidebar
+  // shows something useful right away. The LLM-refined title overwrites this later.
+  let fallbackTitle: string | null = null;
+  if (wasNew) {
+    const words = body.message.trim().split(/\s+/).slice(0, 8).join(" ");
+    fallbackTitle = words.length > 60 ? words.slice(0, 57) + "…" : words;
+    if (fallbackTitle) {
+      await updateSessionTitle(user.id, sessionId, fallbackTitle);
+    }
+  }
+
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       const encoder = new TextEncoder();
@@ -78,6 +89,9 @@ export async function POST(req: Request) {
       }
       // Tell the client which session this turn belongs to (esp. when one was just created).
       emit("session", { sessionId });
+      if (fallbackTitle) {
+        emit("title", { title: fallbackTitle });
+      }
 
       try {
         for (let i = 0; i < 8; i++) {

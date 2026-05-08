@@ -3,7 +3,9 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowRight, Loader2, Plus, Send, Wrench } from "lucide-react";
+import { ArrowRight, Loader2, Send, Wrench } from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { cn } from "@/lib/utils";
 
 type ChipPayload = { id: string; label: string; url: string; rationale?: string };
@@ -26,6 +28,7 @@ export function Chat({ sessionId: initialSessionId }: { sessionId?: string }) {
   const [streaming, setStreaming] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(!!initialSessionId);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     if (!initialSessionId) return;
@@ -79,6 +82,14 @@ export function Chat({ sessionId: initialSessionId }: { sessionId?: string }) {
     })();
     return () => { cancelled = true; };
   }, [initialSessionId]);
+
+  // Auto-grow textarea up to 8 rows.
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 192)}px`;
+  }, [input]);
 
   async function send(textOverride?: string) {
     const text = (textOverride ?? input).trim();
@@ -184,43 +195,49 @@ export function Chat({ sessionId: initialSessionId }: { sessionId?: string }) {
   }
 
   return (
-    <div className="flex flex-col h-[calc(100vh-7rem)]">
-      <div ref={scrollRef} className="flex-1 overflow-y-auto pr-2">
-        {loadingHistory ? (
-          <div className="flex items-center gap-2 text-xs text-[var(--color-text-muted)]"><Loader2 size={12} className="animate-spin" /> Loading conversation…</div>
-        ) : messages.length === 0 ? (
-          <EmptyState onPick={(q) => send(q)} />
-        ) : (
-          <div className="space-y-5 max-w-3xl">
-            {messages.map((m, i) => (
-              <Message key={i} m={m} streaming={streaming && i === messages.length - 1 && m.role === "assistant"} />
-            ))}
-          </div>
-        )}
+    <div className="flex-1 flex flex-col min-h-0">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto px-6 py-6">
+        <div className="mx-auto max-w-3xl">
+          {loadingHistory ? (
+            <div className="flex items-center gap-2 text-xs text-[var(--color-text-muted)]">
+              <Loader2 size={12} className="animate-spin" /> Loading conversation…
+            </div>
+          ) : (
+            <div className="space-y-5">
+              {messages.map((m, i) => (
+                <Message key={i} m={m} streaming={streaming && i === messages.length - 1 && m.role === "assistant"} />
+              ))}
+            </div>
+          )}
+        </div>
       </div>
-      <div className="pt-4">
-        <div className="surface-card p-2 flex items-end gap-2">
-          <textarea
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                send();
-              }
-            }}
-            placeholder={sessionId ? "Reply…" : "Ask anything about your Agentforce adoption…"}
-            rows={1}
-            className="flex-1 bg-transparent border-0 outline-none resize-none text-sm py-2 px-2 max-h-40 placeholder:text-[var(--color-text-subtle)]"
-          />
-          <button
-            onClick={() => send()}
-            disabled={!input.trim() || streaming}
-            className="h-10 px-4 rounded-md bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-40 text-white text-sm font-semibold inline-flex items-center gap-2 whitespace-nowrap"
-          >
-            {streaming ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
-            Send
-          </button>
+
+      <div className="border-t border-[var(--color-border)] bg-[var(--color-bg)]/85 backdrop-blur-md px-6 py-4">
+        <div className="mx-auto max-w-3xl">
+          <div className="surface-card p-2 flex items-end gap-2">
+            <textarea
+              ref={textareaRef}
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  send();
+                }
+              }}
+              placeholder={sessionId ? "Reply…" : "Ask anything about your Agentforce adoption…"}
+              rows={1}
+              className="flex-1 bg-transparent border-0 outline-none resize-none text-sm py-2 px-2 max-h-48 placeholder:text-[var(--color-text-subtle)]"
+            />
+            <button
+              onClick={() => send()}
+              disabled={!input.trim() || streaming}
+              className="h-10 px-4 rounded-md bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-40 text-white text-sm font-semibold inline-flex items-center gap-2 whitespace-nowrap"
+            >
+              {streaming ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+              Send
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -257,9 +274,7 @@ function Message({ m, streaming }: { m: DisplayMessage; streaming: boolean }) {
           )}
         </details>
       ))}
-      {m.content && (
-        <div className="text-sm leading-relaxed whitespace-pre-wrap">{m.content}</div>
-      )}
+      {m.content && <AssistantMarkdown content={m.content} />}
       {m.chips.length > 0 && (
         <div className="flex flex-wrap gap-2 mt-3">
           {m.chips.map((c) => {
@@ -293,27 +308,71 @@ function Message({ m, streaming }: { m: DisplayMessage; streaming: boolean }) {
   );
 }
 
-function EmptyState({ onPick }: { onPick: (q: string) => void }) {
-  const suggestions = [
-    "What should I do next on my adoption journey?",
-    "Audit my Salesforce org for Agentforce readiness.",
-    "What use cases did I capture, and how do they map to my org?",
-    "Mark Pre-Agent Setup chapter as done — I already did it.",
-  ];
+function AssistantMarkdown({ content }: { content: string }) {
   return (
-    <div className="max-w-3xl">
-      <div className="mb-1 text-xs uppercase tracking-[0.25em] text-[var(--color-text-muted)]">Try asking</div>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
-        {suggestions.map((s, i) => (
-          <button
-            key={i}
-            onClick={() => onPick(s)}
-            className="surface-card p-4 text-left hover:border-[var(--color-border-strong)] transition"
-          >
-            <div className="text-sm">{s}</div>
-          </button>
-        ))}
-      </div>
+    <div className="text-sm leading-relaxed space-y-3 [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          h1: ({ children }) => <h2 className="text-base font-semibold mt-4 mb-2">{children}</h2>,
+          h2: ({ children }) => <h3 className="text-base font-semibold mt-4 mb-2">{children}</h3>,
+          h3: ({ children }) => <h4 className="text-sm font-semibold mt-3 mb-1.5">{children}</h4>,
+          h4: ({ children }) => <h5 className="text-sm font-semibold mt-3 mb-1.5">{children}</h5>,
+          h5: ({ children }) => <h6 className="text-sm font-semibold mt-3 mb-1.5">{children}</h6>,
+          h6: ({ children }) => <div className="text-sm font-semibold mt-3 mb-1.5">{children}</div>,
+          p: ({ children }) => <p className="leading-relaxed">{children}</p>,
+          a: ({ href, children }) => (
+            <a
+              href={href}
+              target="_blank"
+              rel="noreferrer"
+              className="text-[var(--color-glow)] underline underline-offset-2 hover:text-[var(--color-accent)]"
+            >
+              {children}
+            </a>
+          ),
+          ul: ({ children }) => <ul className="list-disc pl-5 space-y-1">{children}</ul>,
+          ol: ({ children }) => <ol className="list-decimal pl-5 space-y-1">{children}</ol>,
+          li: ({ children }) => <li className="leading-relaxed">{children}</li>,
+          strong: ({ children }) => <strong className="font-semibold text-[var(--color-text)]">{children}</strong>,
+          em: ({ children }) => <em className="italic">{children}</em>,
+          code: ({ children, className }) => {
+            // Inline vs block: react-markdown gives className 'language-*' for blocks.
+            const isBlock = !!className;
+            if (isBlock) {
+              return (
+                <code className="block">{children}</code>
+              );
+            }
+            return (
+              <code className="rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] px-1 py-0.5 text-[12px] font-mono">
+                {children}
+              </code>
+            );
+          },
+          pre: ({ children }) => (
+            <pre className="rounded-md bg-[var(--color-surface-2)] border border-[var(--color-border)] p-3 overflow-x-auto text-xs leading-relaxed font-mono">
+              {children}
+            </pre>
+          ),
+          blockquote: ({ children }) => (
+            <blockquote className="border-l-2 border-[var(--color-border-strong)] pl-3 text-[var(--color-text-muted)] italic">
+              {children}
+            </blockquote>
+          ),
+          hr: () => <hr className="border-[var(--color-border)] my-4" />,
+          table: ({ children }) => (
+            <div className="rounded-md border border-[var(--color-border)] overflow-x-auto">
+              <table className="w-full text-sm">{children}</table>
+            </div>
+          ),
+          thead: ({ children }) => <thead className="bg-[var(--color-surface-2)]/60">{children}</thead>,
+          th: ({ children }) => <th className="px-3 py-2 text-left font-medium text-[var(--color-text-muted)]">{children}</th>,
+          td: ({ children }) => <td className="px-3 py-2 border-t border-[var(--color-border)]">{children}</td>,
+        }}
+      >
+        {content}
+      </ReactMarkdown>
     </div>
   );
 }
@@ -324,7 +383,7 @@ export function NewConversationButton() {
       href="/agent"
       className="h-9 px-3 rounded-md bg-[var(--color-surface-2)] border border-[var(--color-border)] hover:border-[var(--color-border-strong)] text-sm inline-flex items-center gap-2 whitespace-nowrap"
     >
-      <Plus size={14} /> New conversation
+      New conversation
     </Link>
   );
 }
