@@ -11,6 +11,11 @@ import { WhiteboardStep } from "./steps/Whiteboard";
 import { UseCaseCaptureStep } from "./steps/UseCaseCapture";
 import { KnowledgeAuditStep } from "./steps/KnowledgeAudit";
 import { OrgScanReportStep } from "./steps/OrgScanReport";
+import { RichContentStep } from "./steps/RichContent";
+import { SetupChecklistStep } from "./steps/SetupChecklist";
+import { ActionInventoryStep } from "./steps/ActionInventory";
+import { ChannelPlannerStep } from "./steps/ChannelPlanner";
+import { PromptDesignerStep } from "./steps/PromptDesigner";
 import { cn } from "@/lib/utils";
 
 type Props = {
@@ -251,5 +256,15 @@ function StepBody({
           <p className="text-sm text-[var(--color-text-muted)] mt-2">{step.description}</p>
         </div>
       );
+    case "richContent":
+      return <RichContentStep step={step} />;
+    case "setupChecklist":
+      return <SetupChecklistStep step={step} evidence={evidence} onEvidence={onEvidence} />;
+    case "actionInventory":
+      return <ActionInventoryStep step={step} evidence={evidence} onEvidence={onEvidence} />;
+    case "channelPlanner":
+      return <ChannelPlannerStep step={step} evidence={evidence} onEvidence={onEvidence} />;
+    case "promptDesigner":
+      return <PromptDesignerStep step={step} evidence={evidence} onEvidence={onEvidence} />;
   }
 }

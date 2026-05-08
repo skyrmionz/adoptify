@@ -1,7 +1,17 @@
 import type { Section, Mission } from "./types";
 import { preAgentSetup } from "./sections/01-pre-agent-setup";
+import { salesforceSetup } from "./sections/02-salesforce-setup";
+import { dataFoundations } from "./sections/03-data-foundations";
+import { buildYourAgent } from "./sections/04-build-your-agent";
+import { channelsAndLaunch } from "./sections/05-channels-and-launch";
 
-export const sections: Section[] = [preAgentSetup];
+export const sections: Section[] = [
+  preAgentSetup,
+  salesforceSetup,
+  dataFoundations,
+  buildYourAgent,
+  channelsAndLaunch,
+];
 
 export function getSection(slug: string): Section | undefined {
   return sections.find((s) => s.slug === slug);

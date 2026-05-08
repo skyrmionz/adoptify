@@ -1,9 +1,14 @@
 import { sections, totalMissionCount } from "@/content";
 import { getAllProgress } from "@/lib/progress";
 import { getSessionUser } from "@/lib/auth";
+import { queryOne } from "@/lib/db";
 import { CheckCircle2, Circle, Clock } from "lucide-react";
 
 export const runtime = "nodejs";
+
+type ChapterScore = { chapterId: string; title: string; score: number; notes: string };
+type AssessmentRow = { scanned_at: string; score: number; snapshot_json: unknown; findings_json: { byChapter?: ChapterScore[] } | null };
+type ScoredSnapshot = { byChapter?: ChapterScore[] } | null;
 
 export default async function ProgressPage() {
   const user = await getSessionUser();
@@ -13,6 +18,18 @@ export default async function ProgressPage() {
   const total = totalMissionCount();
   const completed = progress.filter((p) => p.status === "completed").length;
   const pct = total === 0 ? 0 : Math.round((completed / total) * 100);
+
+  // Pull byChapter from the latest assessment if it exists. We re-score against
+  // the cached snapshot to avoid a re-run; new structure is computed by the scanner.
+  const latest = await queryOne<AssessmentRow>(
+    `SELECT scanned_at, score, snapshot_json, findings_json
+     FROM org_assessments WHERE user_id = $1 ORDER BY scanned_at DESC LIMIT 1`,
+    [user.id],
+  );
+  // findings_json is the legacy storage; new scans place byChapter on the snapshot via scoreSnapshot.
+  // For older rows, we fall back gracefully.
+  const snapshotWithChapters = latest?.snapshot_json as unknown as ScoredSnapshot;
+  const byChapter = snapshotWithChapters?.byChapter ?? null;
 
   return (
     <>
@@ -27,7 +44,7 @@ export default async function ProgressPage() {
       <div className="surface-card p-6 mb-10">
         <div className="flex items-end justify-between mb-3">
           <div>
-            <div className="text-xs uppercase tracking-[0.25em] text-[var(--color-text-muted)]">Overall</div>
+            <div className="text-xs uppercase tracking-[0.25em] text-[var(--color-text-muted)]">Mission completion</div>
             <div className="text-4xl font-semibold tracking-tight mt-1">{pct}%</div>
           </div>
           <div className="text-sm text-[var(--color-text-muted)]">{completed} of {total} missions complete</div>
@@ -36,6 +53,32 @@ export default async function ProgressPage() {
           <div className="h-full bg-gradient-to-r from-[var(--color-accent)] to-[var(--color-glow)] transition-all" style={{ width: `${pct}%` }} />
         </div>
       </div>
+
+      {byChapter && byChapter.length > 0 && (
+        <div className="surface-card p-6 mb-10">
+          <div className="text-xs uppercase tracking-[0.25em] text-[var(--color-text-muted)] mb-1">Org readiness by chapter</div>
+          <div className="text-sm text-[var(--color-text-muted)] mb-5">
+            Inferred from your latest org scan ({latest?.scanned_at ? new Date(latest.scanned_at).toLocaleDateString() : "—"}).
+          </div>
+          <div className="space-y-3">
+            {byChapter.map((c) => (
+              <div key={c.chapterId}>
+                <div className="flex items-baseline justify-between text-xs mb-1">
+                  <div className="text-[var(--color-text)] font-medium">{c.title}</div>
+                  <div className="text-[var(--color-text-muted)]">{c.score} / 100</div>
+                </div>
+                <div className="h-1.5 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
+                  <div
+                    className="h-full bg-gradient-to-r from-[var(--color-accent)] to-[var(--color-glow)] transition-all"
+                    style={{ width: `${c.score}%` }}
+                  />
+                </div>
+                <div className="text-[11px] text-[var(--color-text-subtle)] mt-1">{c.notes}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="space-y-8">
         {sections.map((section) => {
@@ -71,11 +114,11 @@ export default async function ProgressPage() {
                           <div className="text-xs text-[var(--color-text-muted)] mt-0.5">{m.summary}</div>
                         </div>
                         {completed ? (
-                          <span className="pill pill-success"><CheckCircle2 size={12} /> Done {p?.completed_at ? new Date(p.completed_at).toLocaleDateString() : ""}</span>
+                          <span className="pill pill-success whitespace-nowrap"><CheckCircle2 size={12} /> Done {p?.completed_at ? new Date(p.completed_at).toLocaleDateString() : ""}</span>
                         ) : inProgress ? (
-                          <span className="pill pill-accent"><Clock size={12} /> In progress</span>
+                          <span className="pill pill-accent whitespace-nowrap"><Clock size={12} /> In progress</span>
                         ) : (
-                          <span className="pill"><Circle size={12} /> Not started</span>
+                          <span className="pill whitespace-nowrap"><Circle size={12} /> Not started</span>
                         )}
                       </div>
                     </li>

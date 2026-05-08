@@ -164,3 +164,78 @@ export async function sfJson<T = unknown>(creds: SfCredentials, path: string, in
 }
 
 export const API_VERSION = "v62.0";
+
+// --- Setup-check verifier ---------------------------------------
+// Runs a single SetupCheckItem.verify rule against a connected org.
+// Returns a normalized result the renderer can show.
+type VerifyExpect = "exists" | { minCount: number };
+
+export type VerifyRule =
+  | { kind: "manual" }
+  | { kind: "tooling.soql"; soql: string; expect: VerifyExpect }
+  | { kind: "rest.soql"; soql: string; expect: VerifyExpect }
+  | { kind: "rest.path"; path: string; jsonPath?: string; expect: "truthy" | "equals"; value?: unknown }
+  | { kind: "scanner.path"; path: string; expect: "truthy" | { gte: number } };
+
+export type VerifyResult = {
+  ok: boolean;
+  count?: number;
+  sample?: string;
+  error?: string;
+};
+
+function meetsExpect(count: number, expect: VerifyExpect): boolean {
+  if (expect === "exists") return count > 0;
+  return count >= (expect.minCount ?? 1);
+}
+
+function readJsonPath(obj: unknown, path?: string): unknown {
+  if (!path) return obj;
+  const parts = path.split(".");
+  let cur: unknown = obj;
+  for (const p of parts) {
+    if (cur && typeof cur === "object" && p in (cur as Record<string, unknown>)) {
+      cur = (cur as Record<string, unknown>)[p];
+    } else {
+      return undefined;
+    }
+  }
+  return cur;
+}
+
+export async function runVerifyCheck(creds: SfCredentials, rule: VerifyRule): Promise<VerifyResult> {
+  try {
+    if (rule.kind === "manual") return { ok: false, error: "Manual checks must be marked manually." };
+    if (rule.kind === "tooling.soql" || rule.kind === "rest.soql") {
+      const base = rule.kind === "tooling.soql"
+        ? `/services/data/${API_VERSION}/tooling/query?q=`
+        : `/services/data/${API_VERSION}/query?q=`;
+      const r = await sfJson<{ totalSize: number; records: Array<Record<string, unknown>> }>(
+        creds,
+        base + encodeURIComponent(rule.soql),
+      );
+      const count = r.totalSize ?? r.records?.length ?? 0;
+      const sampleRow = r.records?.[0];
+      const sampleStr = sampleRow
+        ? (sampleRow.Name as string | undefined) ?? (sampleRow.Label as string | undefined) ?? (sampleRow.DeveloperName as string | undefined)
+        : undefined;
+      const ok = meetsExpect(count, rule.expect);
+      return { ok, count, sample: sampleStr ?? undefined };
+    }
+    if (rule.kind === "rest.path") {
+      const r = await sfJson<unknown>(creds, rule.path);
+      const v = readJsonPath(r, rule.jsonPath);
+      if (rule.expect === "truthy") return { ok: !!v };
+      if (rule.expect === "equals") return { ok: v === rule.value };
+      return { ok: false, error: "unsupported expect" };
+    }
+    if (rule.kind === "scanner.path") {
+      // scanner.path is resolved server-side in the route by passing the latest snapshot.
+      return { ok: false, error: "scanner.path resolved by route" };
+    }
+    return { ok: false, error: "unsupported rule" };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "verify_failed" };
+  }
+}
+
