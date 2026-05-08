@@ -78,7 +78,7 @@ export function ChaptersList({ sections, progress }: { sections: Section[]; prog
               <div className="flex items-start justify-between gap-4">
                 <div className="min-w-0">
                   <div className="text-[11px] uppercase tracking-[0.25em] text-[var(--color-accent)]">
-                    Chapter · {section.required ? "Required" : "Optional"}
+                    Chapter
                   </div>
                   <h2 className="text-xl font-semibold mt-1 truncate">{section.title}</h2>
                   <p className="text-sm text-[var(--color-text-muted)] mt-1 max-w-2xl">{section.description}</p>

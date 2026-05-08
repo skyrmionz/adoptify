@@ -35,7 +35,7 @@ export default async function ChapterPage(props: { params: Promise<Params> }) {
           <ArrowLeft size={12} /> All chapters
         </Link>
         <div className="text-xs uppercase tracking-[0.25em] text-[var(--color-accent)] mb-2">
-          Chapter · {section.required ? "Required" : "Optional"}
+          Chapter
         </div>
         <h1 className="text-3xl font-semibold tracking-tight">{section.title}</h1>
         <p className="text-sm text-[var(--color-text-muted)] mt-2 max-w-2xl">{section.description}</p>

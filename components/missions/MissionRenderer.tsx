@@ -103,29 +103,32 @@ export function MissionRenderer({ mission, initialEvidence, initialStatus, conne
       <article className="min-w-0 max-w-3xl">
         {mission.steps.map((step, i) => {
           const isDone = !!stepsDone[i];
+          const isOptional = step.kind === "coderPrompt";
           return (
             <section
               key={i}
               id={`section-${i + 1}`}
               className="border-t border-[var(--color-border)] py-10 first:border-t-0 first:pt-0"
             >
-              <div className="flex items-start justify-between gap-4 mb-5">
-                <div className="text-[11px] uppercase tracking-[0.25em] text-[var(--color-text-subtle)] whitespace-nowrap">
-                  Section {i + 1} of {mission.steps.length}
+              {!isOptional && (
+                <div className="flex items-start justify-between gap-4 mb-5">
+                  <div className="text-[11px] uppercase tracking-[0.25em] text-[var(--color-text-subtle)] whitespace-nowrap">
+                    Section {i + 1} of {mission.steps.length}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => toggleStepDone(i)}
+                    className={cn(
+                      "h-8 px-3 rounded-md text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap transition shrink-0",
+                      isDone
+                        ? "bg-[var(--color-success)]/15 text-[var(--color-success)] border border-[var(--color-success)]/30 hover:bg-[var(--color-success)]/20"
+                        : "bg-[var(--color-surface-2)] border border-[var(--color-border)] hover:border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]",
+                    )}
+                  >
+                    {isDone ? <><CheckCircle2 size={12} /> Done</> : <><Circle size={12} /> Mark done</>}
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => toggleStepDone(i)}
-                  className={cn(
-                    "h-8 px-3 rounded-md text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap transition shrink-0",
-                    isDone
-                      ? "bg-[var(--color-success)]/15 text-[var(--color-success)] border border-[var(--color-success)]/30 hover:bg-[var(--color-success)]/20"
-                      : "bg-[var(--color-surface-2)] border border-[var(--color-border)] hover:border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]",
-                  )}
-                >
-                  {isDone ? <><CheckCircle2 size={12} /> Done</> : <><Circle size={12} /> Mark done</>}
-                </button>
-              </div>
+              )}
 
               <StepBody
                 step={step}
@@ -145,6 +148,7 @@ export function MissionRenderer({ mission, initialEvidence, initialStatus, conne
             <div className="text-[11px] uppercase tracking-[0.25em] text-[var(--color-text-muted)] mb-3">In this mission</div>
             <ol className="flex flex-col gap-1.5">
               {mission.steps.map((s, i) => {
+                if (s.kind === "coderPrompt") return null;
                 const isDone = !!stepsDone[i];
                 return (
                   <li key={i}>
