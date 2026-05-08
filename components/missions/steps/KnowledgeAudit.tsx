@@ -72,19 +72,19 @@ export function KnowledgeAuditStep({
       <div className="flex flex-wrap gap-2 mb-4">
         <button
           onClick={() => add("salesforce-knowledge")}
-          className="h-9 px-3 rounded-md bg-[var(--color-surface-2)] border border-[var(--color-border)] hover:border-[var(--color-border-strong)] text-sm inline-flex items-center gap-2"
+          className="h-9 px-3 rounded-md bg-[var(--color-surface-2)] border border-[var(--color-border)] hover:border-[var(--color-border-strong)] text-sm inline-flex items-center gap-2 whitespace-nowrap"
         >
           <Plus size={14} /> Salesforce Knowledge
         </button>
         <button
           onClick={() => add("data-cloud")}
-          className="h-9 px-3 rounded-md bg-[var(--color-surface-2)] border border-[var(--color-border)] hover:border-[var(--color-border-strong)] text-sm inline-flex items-center gap-2"
+          className="h-9 px-3 rounded-md bg-[var(--color-surface-2)] border border-[var(--color-border)] hover:border-[var(--color-border-strong)] text-sm inline-flex items-center gap-2 whitespace-nowrap"
         >
           <Plus size={14} /> Data Cloud
         </button>
         <button
           onClick={() => add("external")}
-          className="h-9 px-3 rounded-md bg-[var(--color-surface-2)] border border-[var(--color-border)] hover:border-[var(--color-border-strong)] text-sm inline-flex items-center gap-2"
+          className="h-9 px-3 rounded-md bg-[var(--color-surface-2)] border border-[var(--color-border)] hover:border-[var(--color-border-strong)] text-sm inline-flex items-center gap-2 whitespace-nowrap"
         >
           <Plus size={14} /> External app
         </button>
@@ -161,7 +161,7 @@ function SourceRow({
           <button
             onClick={onCheck}
             disabled={source.status === "checking"}
-            className="h-9 px-3 rounded-md bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50 text-white text-sm font-semibold inline-flex items-center gap-2"
+            className="h-9 px-3 rounded-md bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50 text-white text-sm font-semibold inline-flex items-center gap-2 whitespace-nowrap"
           >
             {source.status === "checking" ? <><Loader2 size={14} className="animate-spin" /> Checking…</> : "Run live check"}
           </button>

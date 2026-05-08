@@ -51,7 +51,7 @@ export function UseCaseCaptureStep({
         </div>
         <button
           onClick={addItem}
-          className="h-10 px-4 rounded-md bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-white text-sm font-semibold inline-flex items-center gap-2"
+          className="h-10 px-4 rounded-md bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-white text-sm font-semibold inline-flex items-center gap-2 whitespace-nowrap shrink-0"
         >
           <Plus size={14} /> Add use case
         </button>

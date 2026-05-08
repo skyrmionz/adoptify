@@ -1,6 +1,8 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useCallback, useState } from "react";
+import { useRouter } from "next/navigation";
+import { CheckCircle2, Circle, Loader2 } from "lucide-react";
 import type { Mission, Step } from "@/content/types";
 import { FrameworkStep } from "./steps/Framework";
 import { EmbedStep } from "./steps/Embed";
@@ -9,7 +11,6 @@ import { WhiteboardStep } from "./steps/Whiteboard";
 import { UseCaseCaptureStep } from "./steps/UseCaseCapture";
 import { KnowledgeAuditStep } from "./steps/KnowledgeAudit";
 import { OrgScanReportStep } from "./steps/OrgScanReport";
-import { CheckCircle2, Circle } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 type Props = {
@@ -19,136 +20,200 @@ type Props = {
   connected: boolean;
 };
 
+type StepDoneMap = Record<number, boolean>;
+
 export function MissionRenderer({ mission, initialEvidence, initialStatus, connected }: Props) {
+  const router = useRouter();
   const [evidence, setEvidence] = useState<Record<string, unknown>>(initialEvidence);
   const [status, setStatus] = useState<string>(initialStatus);
-  const [activeStep, setActiveStep] = useState(0);
   const [savingComplete, setSavingComplete] = useState(false);
 
+  const initialStepsDone: StepDoneMap = {};
+  const stored = (initialEvidence.stepsDone as StepDoneMap) ?? {};
+  for (const k of Object.keys(stored)) initialStepsDone[Number(k)] = !!stored[Number(k)];
+  const [stepsDone, setStepsDone] = useState<StepDoneMap>(initialStepsDone);
+
   const persistEvidence = useCallback(async (patch: Record<string, unknown>) => {
-    const next = { ...evidence, ...patch };
-    setEvidence(next);
+    setEvidence((cur) => ({ ...cur, ...patch }));
     await fetch("/api/progress", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ missionId: mission.id, evidence: patch }),
     });
-  }, [evidence, mission.id]);
+  }, [mission.id]);
 
-  const completeMission = useCallback(async () => {
+  async function toggleStepDone(idx: number) {
+    const next = { ...stepsDone, [idx]: !stepsDone[idx] };
+    setStepsDone(next);
+    await persistEvidence({ stepsDone: next });
+  }
+
+  async function completeMission() {
     setSavingComplete(true);
     try {
       const res = await fetch("/api/progress", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ missionId: mission.id, completed: true, evidence: { reviewed_at: new Date().toISOString() } }),
+        body: JSON.stringify({
+          missionId: mission.id,
+          completed: true,
+          evidence: { reviewed_at: new Date().toISOString() },
+        }),
       });
-      if (res.ok) setStatus("completed");
+      if (res.ok) {
+        setStatus("completed");
+        router.refresh();
+      }
     } finally {
       setSavingComplete(false);
     }
-  }, [mission.id]);
+  }
 
-  const canComplete = canMissionComplete(mission, evidence, connected);
+  async function reopenMission() {
+    setSavingComplete(true);
+    try {
+      const res = await fetch("/api/progress", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          missionId: mission.id,
+          completed: false,
+          evidence: { reopened_at: new Date().toISOString() },
+        }),
+      });
+      if (res.ok) {
+        setStatus("in_progress");
+        router.refresh();
+      }
+    } finally {
+      setSavingComplete(false);
+    }
+  }
+
+  const completed = status === "completed";
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-[220px_1fr] gap-8">
-      <nav className="lg:sticky lg:top-20 self-start">
-        <ol className="flex lg:flex-col gap-1.5 overflow-x-auto lg:overflow-visible pb-2">
-          {mission.steps.map((s, i) => (
-            <li key={i}>
+    <div className="grid grid-cols-1 lg:grid-cols-[1fr_240px] gap-10">
+      <article className="min-w-0 max-w-3xl">
+        {mission.steps.map((step, i) => {
+          const isDone = !!stepsDone[i];
+          return (
+            <section
+              key={i}
+              id={`section-${i + 1}`}
+              className="border-t border-[var(--color-border)] py-10 first:border-t-0 first:pt-0"
+            >
+              <div className="flex items-start justify-between gap-4 mb-5">
+                <div className="text-[11px] uppercase tracking-[0.25em] text-[var(--color-text-subtle)] whitespace-nowrap">
+                  Section {i + 1} of {mission.steps.length}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => toggleStepDone(i)}
+                  className={cn(
+                    "h-8 px-3 rounded-md text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap transition shrink-0",
+                    isDone
+                      ? "bg-[var(--color-success)]/15 text-[var(--color-success)] border border-[var(--color-success)]/30 hover:bg-[var(--color-success)]/20"
+                      : "bg-[var(--color-surface-2)] border border-[var(--color-border)] hover:border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]",
+                  )}
+                >
+                  {isDone ? <><CheckCircle2 size={12} /> Done</> : <><Circle size={12} /> Mark done</>}
+                </button>
+              </div>
+
+              <StepBody
+                step={step}
+                missionId={mission.id}
+                evidence={evidence}
+                onEvidence={persistEvidence}
+                connected={connected}
+              />
+            </section>
+          );
+        })}
+      </article>
+
+      <aside className="hidden lg:block">
+        <div className="sticky top-24 space-y-6">
+          <nav>
+            <div className="text-[11px] uppercase tracking-[0.25em] text-[var(--color-text-muted)] mb-3">In this mission</div>
+            <ol className="flex flex-col gap-1.5">
+              {mission.steps.map((s, i) => {
+                const isDone = !!stepsDone[i];
+                return (
+                  <li key={i}>
+                    <a
+                      href={`#section-${i + 1}`}
+                      className="flex items-center gap-2 text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors"
+                    >
+                      <span className={cn(
+                        "h-4 w-4 rounded-full text-[9px] flex items-center justify-center border shrink-0",
+                        isDone
+                          ? "bg-[var(--color-success)]/15 border-[var(--color-success)]/40 text-[var(--color-success)]"
+                          : "border-[var(--color-border)]",
+                      )}>
+                        {isDone ? "✓" : i + 1}
+                      </span>
+                      <span className="truncate">{s.title}</span>
+                    </a>
+                  </li>
+                );
+              })}
+            </ol>
+          </nav>
+
+          <div className="border-t border-[var(--color-border)] pt-5">
+            <div className="text-[11px] uppercase tracking-[0.25em] text-[var(--color-text-muted)] mb-2">Mission</div>
+            {completed ? (
               <button
-                onClick={() => setActiveStep(i)}
-                className={cn(
-                  "w-full flex items-center gap-3 text-left px-3 h-10 rounded-md text-sm transition-colors whitespace-nowrap",
-                  i === activeStep
-                    ? "bg-[var(--color-surface-2)] text-[var(--color-text)]"
-                    : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)]",
-                )}
+                type="button"
+                onClick={reopenMission}
+                disabled={savingComplete}
+                className="w-full h-10 rounded-md bg-[var(--color-success)]/15 border border-[var(--color-success)]/30 text-[var(--color-success)] hover:bg-[var(--color-success)]/20 text-sm font-semibold inline-flex items-center justify-center gap-2 whitespace-nowrap"
               >
-                <span className={cn(
-                  "h-5 w-5 rounded-full text-[11px] flex items-center justify-center border",
-                  i === activeStep ? "border-[var(--color-glow)] text-[var(--color-glow)]" : "border-[var(--color-border)]",
-                )}>{i + 1}</span>
-                <span className="font-medium truncate">{stepLabel(s)}</span>
+                {savingComplete ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
+                Mission complete
               </button>
-            </li>
-          ))}
-        </ol>
-
-        <div className="hidden lg:block mt-6 pt-6 border-t border-[var(--color-border)]">
-          <button
-            onClick={completeMission}
-            disabled={!canComplete || savingComplete || status === "completed"}
-            className={cn(
-              "w-full h-10 rounded-md font-semibold text-sm transition",
-              status === "completed"
-                ? "bg-[var(--color-success)]/15 text-[var(--color-success)] border border-[var(--color-success)]/30"
-                : canComplete
-                  ? "bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-white"
-                  : "bg-[var(--color-surface-2)] text-[var(--color-text-subtle)] cursor-not-allowed border border-[var(--color-border)]",
+            ) : (
+              <button
+                type="button"
+                onClick={completeMission}
+                disabled={savingComplete}
+                className="w-full h-10 rounded-md bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50 text-white text-sm font-semibold inline-flex items-center justify-center gap-2 whitespace-nowrap"
+              >
+                {savingComplete ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
+                Mark mission done
+              </button>
             )}
-          >
-            {status === "completed" ? (
-              <span className="inline-flex items-center gap-1.5"><CheckCircle2 size={14} /> Mission complete</span>
-            ) : savingComplete ? "Saving…" : canComplete ? "Mark mission complete" : <span className="inline-flex items-center gap-1.5"><Circle size={14} /> Steps remaining</span>}
-          </button>
-          <p className="text-[11px] text-[var(--color-text-subtle)] mt-2 leading-relaxed">{mission.verify.explain}</p>
-        </div>
-      </nav>
-
-      <section>
-        {mission.steps.map((step, i) => (
-          <div key={i} className={i === activeStep ? "block" : "hidden"}>
-            <StepBody
-              step={step}
-              missionId={mission.id}
-              evidence={evidence}
-              onEvidence={persistEvidence}
-              connected={connected}
-            />
+            <p className="text-[11px] text-[var(--color-text-subtle)] mt-2 leading-relaxed">{mission.verify.explain}</p>
           </div>
-        ))}
-
-        <div className="mt-8 flex items-center justify-between">
-          <button
-            onClick={() => setActiveStep((i) => Math.max(0, i - 1))}
-            disabled={activeStep === 0}
-            className="h-10 px-4 rounded-md text-sm border border-[var(--color-border)] text-[var(--color-text-muted)] disabled:opacity-40 hover:text-[var(--color-text)] hover:border-[var(--color-border-strong)]"
-          >
-            Previous
-          </button>
-          {activeStep < mission.steps.length - 1 ? (
-            <button
-              onClick={() => setActiveStep((i) => Math.min(mission.steps.length - 1, i + 1))}
-              className="h-10 px-5 rounded-md text-sm font-semibold bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-white"
-            >
-              Next step
-            </button>
-          ) : (
-            <button
-              onClick={completeMission}
-              disabled={!canComplete || savingComplete || status === "completed"}
-              className={cn(
-                "h-10 px-5 rounded-md text-sm font-semibold transition",
-                status === "completed"
-                  ? "bg-[var(--color-success)]/15 text-[var(--color-success)] border border-[var(--color-success)]/30"
-                  : canComplete
-                    ? "bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-white"
-                    : "bg-[var(--color-surface-2)] text-[var(--color-text-subtle)] cursor-not-allowed border border-[var(--color-border)]",
-              )}
-            >
-              {status === "completed" ? "Completed" : savingComplete ? "Saving…" : "Complete mission"}
-            </button>
-          )}
         </div>
-      </section>
+      </aside>
+
+      {/* Mobile sticky bar */}
+      <div className="lg:hidden -mx-8 mt-6 px-8 py-3 sticky bottom-0 bg-[var(--color-bg)]/85 backdrop-blur-md border-t border-[var(--color-border)]">
+        {completed ? (
+          <button
+            type="button"
+            onClick={reopenMission}
+            disabled={savingComplete}
+            className="w-full h-10 rounded-md bg-[var(--color-success)]/15 border border-[var(--color-success)]/30 text-[var(--color-success)] text-sm font-semibold inline-flex items-center justify-center gap-2 whitespace-nowrap"
+          >
+            <CheckCircle2 size={14} /> Mission complete
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={completeMission}
+            disabled={savingComplete}
+            className="w-full h-10 rounded-md bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50 text-white text-sm font-semibold inline-flex items-center justify-center gap-2 whitespace-nowrap"
+          >
+            <CheckCircle2 size={14} /> Mark mission done
+          </button>
+        )}
+      </div>
     </div>
   );
-}
-
-function stepLabel(s: Step): string {
-  return s.title;
 }
 
 function StepBody({
@@ -181,31 +246,10 @@ function StepBody({
       return <OrgScanReportStep step={step} connected={connected} missionId={missionId} onEvidence={onEvidence} />;
     case "verifyInOrg":
       return (
-        <div className="surface-card p-6">
-          <h3 className="text-lg font-semibold">{step.title}</h3>
+        <div>
+          <h3 className="text-2xl font-semibold tracking-tight">{step.title}</h3>
           <p className="text-sm text-[var(--color-text-muted)] mt-2">{step.description}</p>
         </div>
       );
   }
-}
-
-function canMissionComplete(mission: Mission, evidence: Record<string, unknown>, connected: boolean): boolean {
-  // Lightweight client-side checks. Server is source of truth for what gets stored;
-  // this just decides whether to enable the "complete" button.
-  for (const step of mission.steps) {
-    if (step.kind === "useCaseCapture") {
-      const list = (evidence.useCases as Array<unknown>) ?? [];
-      if (list.length < (step.minCount ?? 1)) return false;
-    }
-    if (step.kind === "knowledgeAudit") {
-      const sources = (evidence.knowledgeSources as Array<unknown>) ?? [];
-      if (sources.length < 1) return false;
-    }
-    if (step.kind === "orgScanReport") {
-      if (!connected) return false;
-      const scan = evidence.orgScan as { scanned_at?: string } | undefined;
-      if (!scan?.scanned_at) return false;
-    }
-  }
-  return true;
 }
