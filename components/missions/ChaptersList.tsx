@@ -12,11 +12,11 @@ type ProgressMap = Record<string, { status: string; completed_at: string | null 
 
 export function ChaptersList({ sections, progress }: { sections: Section[]; progress: ProgressMap }) {
   const router = useRouter();
-  const [openId, setOpenId] = useState<string | null>(sections[0]?.id ?? null);
+  const [openId, setOpenId] = useState<string | null>(null);
   const [progressLocal, setProgressLocal] = useState<ProgressMap>(progress);
   const [busyChapter, setBusyChapter] = useState<string | null>(null);
 
-  async function markChapterComplete(section: Section) {
+  async function toggleChapterDone(section: Section, markDone: boolean) {
     setBusyChapter(section.id);
     try {
       const updates = await Promise.all(
@@ -26,19 +26,23 @@ export function ChaptersList({ sections, progress }: { sections: Section[]; prog
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               missionId: m.id,
-              completed: true,
-              evidence: { marked_done_manually_at: new Date().toISOString() },
+              completed: markDone,
+              evidence: markDone
+                ? { marked_done_manually_at: new Date().toISOString() }
+                : { reopened_at: new Date().toISOString() },
             }),
           });
-          const data = await res.json().catch(() => null);
-          return { id: m.id, ok: res.ok, data };
+          return { id: m.id, ok: res.ok };
         }),
       );
       setProgressLocal((prev) => {
         const next = { ...prev };
         for (const u of updates) {
-          if (u.ok) {
+          if (!u.ok) continue;
+          if (markDone) {
             next[u.id] = { status: "completed", completed_at: new Date().toISOString() };
+          } else {
+            next[u.id] = { status: "in_progress", completed_at: null };
           }
         }
         return next;
@@ -118,19 +122,19 @@ export function ChaptersList({ sections, progress }: { sections: Section[]; prog
                       <div className="flex items-center gap-2 shrink-0">
                         <button
                           type="button"
-                          onClick={() => markChapterComplete(section)}
-                          disabled={busyChapter === section.id || allDone}
+                          onClick={() => toggleChapterDone(section, !allDone)}
+                          disabled={busyChapter === section.id}
                           className={cn(
                             "h-9 px-3 rounded-md text-xs font-semibold inline-flex items-center gap-2 whitespace-nowrap transition",
                             allDone
-                              ? "bg-[var(--color-success)]/15 text-[var(--color-success)] border border-[var(--color-success)]/30"
+                              ? "bg-[var(--color-success)]/15 text-[var(--color-success)] border border-[var(--color-success)]/30 hover:bg-[var(--color-success)]/25"
                               : "bg-[var(--color-surface-2)] border border-[var(--color-border)] hover:border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]",
                           )}
                         >
                           {busyChapter === section.id ? (
                             <><Loader2 size={12} className="animate-spin" /> Saving</>
                           ) : allDone ? (
-                            <><CheckCircle2 size={12} /> Chapter done</>
+                            <><CheckCircle2 size={12} /> Mark chapter undone</>
                           ) : (
                             <><CheckCircle2 size={12} /> Mark chapter done</>
                           )}
