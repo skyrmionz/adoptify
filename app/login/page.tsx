@@ -60,7 +60,7 @@ export default function LoginPage() {
       className="relative min-h-screen flex items-center justify-center px-6 overflow-hidden"
       style={{
         background:
-          "radial-gradient(80% 60% at 50% 0%, rgba(0, 161, 224, 0.45) 0%, rgba(0, 161, 224, 0.12) 35%, rgba(11, 18, 32, 0) 70%), radial-gradient(60% 50% at 100% 100%, rgba(31, 224, 255, 0.18) 0%, rgba(11, 18, 32, 0) 60%), #0B1220",
+          "radial-gradient(80% 60% at 50% 0%, rgba(0, 161, 224, 0.18) 0%, rgba(0, 161, 224, 0.05) 35%, rgba(11, 18, 32, 0) 70%), radial-gradient(60% 50% at 100% 100%, rgba(31, 224, 255, 0.07) 0%, rgba(11, 18, 32, 0) 60%), #0B1220",
       }}
     >
       {/* Animated dotted glow — positioned within main, above body bg */}
@@ -69,24 +69,24 @@ export default function LoginPage() {
         className="pointer-events-none absolute inset-0"
         style={{
           WebkitMaskImage:
-            "radial-gradient(ellipse 90% 90% at 50% 50%, #000 0%, #000 60%, transparent 100%)",
+            "radial-gradient(ellipse 90% 90% at 50% 50%, #000 0%, #000 55%, transparent 100%)",
           maskImage:
-            "radial-gradient(ellipse 90% 90% at 50% 50%, #000 0%, #000 60%, transparent 100%)",
+            "radial-gradient(ellipse 90% 90% at 50% 50%, #000 0%, #000 55%, transparent 100%)",
         }}
       >
         <DottedGlowBackground
           className="absolute inset-0"
-          opacity={1}
-          gap={16}
-          radius={1.8}
-          color="rgba(180, 220, 255, 0.85)"
-          darkColor="rgba(180, 220, 255, 0.85)"
-          glowColor="rgba(31, 224, 255, 1)"
-          darkGlowColor="rgba(31, 224, 255, 1)"
+          opacity={0.45}
+          gap={18}
+          radius={1.5}
+          color="rgba(160, 195, 230, 0.5)"
+          darkColor="rgba(160, 195, 230, 0.5)"
+          glowColor="rgba(31, 224, 255, 0.55)"
+          darkGlowColor="rgba(31, 224, 255, 0.55)"
           backgroundOpacity={0}
-          speedMin={0.3}
-          speedMax={1.6}
-          speedScale={1}
+          speedMin={0.2}
+          speedMax={1.0}
+          speedScale={0.8}
         />
       </div>
 
