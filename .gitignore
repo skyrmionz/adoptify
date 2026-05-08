@@ -1,0 +1,14 @@
+node_modules
+.next
+out
+build
+.DS_Store
+*.log
+.env
+.env.local
+.env.*.local
+next-env.d.ts
+.heroku
+.vercel
+.tsbuildinfo
+tsconfig.tsbuildinfo
