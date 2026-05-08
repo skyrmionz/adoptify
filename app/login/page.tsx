@@ -1,12 +1,25 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "motion/react";
 import Image from "next/image";
 import { DottedGlowBackground } from "@/components/ui/dotted-glow-background";
 
 type Mode = "login" | "signup";
+
+function firstNameOf(user: { name: string | null; email: string }): string {
+  if (user.name) {
+    const trimmed = user.name.trim();
+    if (trimmed) return trimmed.split(/\s+/)[0];
+  }
+  // Fall back to the email's local part, capitalized.
+  const local = user.email.split("@")[0] ?? "";
+  if (!local) return "there";
+  const cleaned = local.replace(/[._-]+/g, " ").trim();
+  const first = cleaned.split(/\s+/)[0] ?? "there";
+  return first.charAt(0).toUpperCase() + first.slice(1);
+}
 
 export default function LoginPage() {
   const router = useRouter();
@@ -17,6 +30,7 @@ export default function LoginPage() {
   const [name, setName] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [welcome, setWelcome] = useState<{ firstName: string } | null>(null);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -46,11 +60,14 @@ export default function LoginPage() {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data?.error ?? `Request failed (${res.status})`);
-      router.push("/missions");
-      router.refresh();
+
+      const user = data?.user ?? { name: name || null, email };
+      const firstName = firstNameOf(user);
+      // Prefetch /missions so the navigation under the welcome screen is instant.
+      router.prefetch("/missions");
+      setWelcome({ firstName });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
-    } finally {
       setSubmitting(false);
     }
   }
@@ -90,13 +107,25 @@ export default function LoginPage() {
         />
       </div>
 
-      {/* Glass modal */}
-      <motion.div
-        initial={{ opacity: 0, y: 12 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.5, ease: [0.32, 0.72, 0, 1] }}
-        className="relative w-full max-w-md rounded-2xl border border-white/10 bg-white/[0.04] backdrop-blur-2xl p-8 shadow-[0_8px_40px_rgba(0,0,0,0.45),inset_0_1px_0_rgba(255,255,255,0.06)]"
-      >
+      <AnimatePresence mode="wait">
+        {welcome ? (
+          <WelcomeScreen
+            key="welcome"
+            firstName={welcome.firstName}
+            onDone={() => {
+              router.push("/missions");
+              router.refresh();
+            }}
+          />
+        ) : (
+          <motion.div
+            key="modal"
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -12, scale: 0.98 }}
+            transition={{ duration: 0.5, ease: [0.32, 0.72, 0, 1] }}
+            className="relative w-full max-w-md rounded-2xl border border-white/10 bg-white/[0.04] backdrop-blur-2xl p-8 shadow-[0_8px_40px_rgba(0,0,0,0.45),inset_0_1px_0_rgba(255,255,255,0.06)]"
+          >
         {/* Inner gradient sheen */}
         <div
           aria-hidden
@@ -230,8 +259,72 @@ export default function LoginPage() {
             </motion.form>
           </AnimatePresence>
         </div>
-      </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </main>
+  );
+}
+
+function WelcomeScreen({ firstName, onDone }: { firstName: string; onDone: () => void }) {
+  // Show the welcome screen for ~1.6s, then trigger navigation. The exit animation
+  // of this component (orchestrated by the parent AnimatePresence) plays during the
+  // route transition so the handoff feels seamless.
+  useEffect(() => {
+    const t = setTimeout(onDone, 1600);
+    return () => clearTimeout(t);
+  }, [onDone]);
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 16 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -8, scale: 0.99 }}
+      transition={{ duration: 0.55, ease: [0.32, 0.72, 0, 1] }}
+      className="relative flex flex-col items-center text-center px-6"
+    >
+      <motion.div
+        initial={{ opacity: 0, scale: 0.85 }}
+        animate={{ opacity: 1, scale: 1 }}
+        transition={{ duration: 0.6, delay: 0.05, ease: [0.32, 0.72, 0, 1] }}
+        className="relative"
+      >
+        <div
+          aria-hidden
+          className="absolute inset-0 -m-8 rounded-full"
+          style={{
+            background:
+              "radial-gradient(50% 50% at 50% 50%, rgba(31,224,255,0.35) 0%, rgba(0,161,224,0.12) 45%, transparent 70%)",
+            filter: "blur(8px)",
+          }}
+        />
+        <Image
+          src="/logos/adoptify.png"
+          alt="adoptify"
+          width={96}
+          height={96}
+          className="relative h-24 w-24 object-contain drop-shadow-[0_0_28px_rgba(31,224,255,0.55)]"
+          priority
+        />
+      </motion.div>
+
+      <motion.h1
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5, delay: 0.25, ease: [0.32, 0.72, 0, 1] }}
+        className="mt-8 text-3xl md:text-4xl font-semibold tracking-tight"
+      >
+        Welcome in, {firstName}!
+      </motion.h1>
+      <motion.p
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5, delay: 0.4, ease: [0.32, 0.72, 0, 1] }}
+        className="mt-3 text-sm text-[var(--color-text-muted)]"
+      >
+        Setting up your adoption journey…
+      </motion.p>
+    </motion.div>
   );
 }
 
