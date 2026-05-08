@@ -11,6 +11,7 @@ import {
   BarChart3,
   Settings,
   ChevronDown,
+  Info,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { cn } from "@/lib/utils";
@@ -217,6 +218,27 @@ export function Sidebar() {
           );
         })}
       </nav>
+
+      <div className="px-3 pt-2 pb-1 border-t border-[var(--color-border)]">
+        <Link
+          href="/about"
+          className={cn(
+            "group relative flex items-center gap-3 px-3 h-10 rounded-md text-sm transition-all whitespace-nowrap",
+            path === "/about"
+              ? "bg-[var(--color-surface-2)] text-[var(--color-text)]"
+              : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)]",
+          )}
+        >
+          <span
+            className={cn(
+              "absolute left-0 top-1.5 bottom-1.5 w-[2px] rounded-r-full transition-colors",
+              path === "/about" ? "bg-[var(--color-glow)]" : "bg-transparent",
+            )}
+          />
+          <Info size={16} className={path === "/about" ? "text-[var(--color-glow)]" : ""} />
+          <span className="font-medium">About</span>
+        </Link>
+      </div>
 
       <div className="p-4 text-[11px] text-[var(--color-text-subtle)] border-t border-[var(--color-border)]">
         <div className="opacity-70">v0.1 · early access</div>
