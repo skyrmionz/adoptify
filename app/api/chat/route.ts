@@ -1,45 +1,86 @@
 import { getSessionUser } from "@/lib/auth";
 import { agentTools, executeTool } from "@/lib/agent-tools";
 import { streamCompletion, ChatMessage } from "@/lib/openrouter";
+import {
+  appendMessage,
+  countMessages,
+  createSession,
+  getSession,
+  listMessages,
+  updateSessionTitle,
+} from "@/lib/chat-sessions";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-const SYSTEM_PROMPT = `You are Adoptify's embedded assistant — a senior Agentforce specialist who helps Salesforce customers adopt Agentforce successfully.
+const SYSTEM_PROMPT = `You are Adoptify's embedded assistant — a senior Agentforce specialist.
 
-You can call tools to:
-- list_missions: see what missions exist and where the user stands
-- read_use_cases: read the use cases the user captured
-- read_knowledge_sources: see the knowledge sources they've registered
-- read_org_snapshot: read their latest Salesforce org scan with findings + score
+You exist inside the Adoptify LMS. The user is working through a 5-chapter Agentforce adoption journey:
+1. Pre-Agent Setup
+2. Salesforce Setup & Licensing
+3. Data & Knowledge Foundations
+4. Build Your Agent
+5. Channels & Launch
 
-Use these tools liberally to ground your answers in the user's actual setup. If they ask "what should I do next?", check missions and the org snapshot first. Be concise, concrete, and prescriptive — name specific objects, fields, flows, or permission sets when you can. If you can't tell from the data, say so and ask the user a single follow-up question.`;
+You have powerful tools. Use them aggressively to ground every answer in the user's actual setup:
+
+- list_missions / read_mission_content / read_mission_evidence — to know exactly where they are.
+- read_org_snapshot / read_setup_checks / read_use_cases / read_knowledge_sources / read_action_inventory / read_prompt_drafts / read_channel_plan — to read everything Adoptify has captured.
+- sf_query (read-only SOQL on tooling or rest API) and sf_describe — to inspect the user's actual Salesforce org metadata when answering specific config questions.
+- mark_mission_complete / mark_mission_incomplete / mark_chapter_complete — to update progress when the user asks ("mark Knowledge done", "I already finished Setup elsewhere") or when their evidence clearly satisfies the verify rule.
+- run_org_scan — to refresh the org assessment.
+- navigate — whenever you recommend an action with a destination (open a mission, run a scan, go to Analytics), call this tool to surface a clickable chip in the chat.
+
+Style:
+- Be concise, concrete, and prescriptive. Cite specific objects, fields, flows, permission sets, mission ids.
+- When you don't know, run a tool. Don't guess.
+- After mutating state (mark_mission_*, run_org_scan), confirm in plain English what changed.
+- Always emit a navigate chip alongside any "you should do X next" recommendation.
+- Default to the user's connected org when they ask Salesforce-specific questions; if no org is connected, surface a navigate chip to /settings.`;
+
+const TITLE_PROMPT = `Generate a 3-6 word title that summarizes this conversation. No quotes, no punctuation at the end. Just the title text.`;
 
 export async function POST(req: Request) {
   const user = await getSessionUser();
   if (!user) return new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 });
 
-  const body = await req.json().catch(() => null) as { messages?: { role: string; content: string }[] } | null;
-  if (!body?.messages || !Array.isArray(body.messages)) {
-    return new Response(JSON.stringify({ error: "messages required" }), { status: 400 });
+  const body = (await req.json().catch(() => null)) as
+    | { sessionId?: string; message?: string }
+    | null;
+  if (!body?.message || typeof body.message !== "string") {
+    return new Response(JSON.stringify({ error: "message required" }), { status: 400 });
   }
 
-  // Stream Server-Sent Events back to the client.
+  // Load or create session.
+  let session = body.sessionId ? await getSession(user.id, body.sessionId) : null;
+  if (!session) {
+    session = await createSession(user.id);
+  }
+  const sessionId = session.id;
+  const wasNew = !body.sessionId || !session?.title;
+
+  // Build the message history from the DB.
+  const history = await listMessages(sessionId);
+  const messages: ChatMessage[] = [
+    { role: "system", content: SYSTEM_PROMPT },
+    ...history.map((h) => h.content as ChatMessage),
+    { role: "user", content: body.message },
+  ];
+
+  // Persist the user turn immediately so a refresh picks it up.
+  await appendMessage(sessionId, "user", { role: "user", content: body.message });
+
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       const encoder = new TextEncoder();
       function emit(event: string, data: unknown) {
         controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
       }
-
-      const messages: ChatMessage[] = [
-        { role: "system", content: SYSTEM_PROMPT },
-        ...(body.messages as ChatMessage[]),
-      ];
+      // Tell the client which session this turn belongs to (esp. when one was just created).
+      emit("session", { sessionId });
 
       try {
-        // Tool-calling loop. Cap iterations to prevent runaway loops.
-        for (let i = 0; i < 6; i++) {
+        for (let i = 0; i < 8; i++) {
           const captured: { msg: ChatMessage | null } = { msg: null };
           await streamCompletion({
             messages,
@@ -48,24 +89,60 @@ export async function POST(req: Request) {
               onText: (chunk) => emit("text", chunk),
               onToolCallStart: (id, name) => emit("tool_start", { id, name }),
               onToolCallArgsDelta: (id, delta) => emit("tool_args", { id, delta }),
-              onFinish: (msg) => { captured.msg = msg; },
+              onFinish: (msg) => {
+                captured.msg = msg;
+              },
             },
           });
           const assistantMsg = captured.msg;
           if (!assistantMsg) break;
           messages.push(assistantMsg);
+          await appendMessage(sessionId, "assistant", assistantMsg);
+
           const toolCalls = assistantMsg.role === "assistant" ? assistantMsg.tool_calls : undefined;
           if (!toolCalls || toolCalls.length === 0) break;
 
           for (const tc of toolCalls) {
             let parsedArgs: unknown = {};
-            try { parsedArgs = JSON.parse(tc.function.arguments); } catch { /* leave empty */ }
+            try {
+              parsedArgs = JSON.parse(tc.function.arguments);
+            } catch {
+              /* leave empty */
+            }
             const result = await executeTool(tc.function.name, parsedArgs, { userId: user.id });
             const resultText = JSON.stringify(result);
             emit("tool_result", { id: tc.id, name: tc.function.name, result });
-            messages.push({ role: "tool", tool_call_id: tc.id, content: resultText });
+            const toolMsg: ChatMessage = { role: "tool", tool_call_id: tc.id, content: resultText };
+            messages.push(toolMsg);
+            await appendMessage(sessionId, "tool", toolMsg);
           }
         }
+
+        // Auto-title after the first exchange.
+        if (wasNew) {
+          try {
+            const total = await countMessages(sessionId);
+            if (total > 0) {
+              const titleMessages: ChatMessage[] = [
+                { role: "system", content: TITLE_PROMPT },
+                { role: "user", content: `User said: ${body.message}\n\nReturn just the title.` },
+              ];
+              let titleBuf = "";
+              await streamCompletion({
+                messages: titleMessages,
+                cb: { onText: (c) => { titleBuf += c; } },
+              });
+              const cleaned = titleBuf.replace(/["'\n]/g, "").trim().slice(0, 60);
+              if (cleaned) {
+                await updateSessionTitle(user.id, sessionId, cleaned);
+                emit("title", { title: cleaned });
+              }
+            }
+          } catch {
+            /* best-effort */
+          }
+        }
+
         emit("done", {});
       } catch (err) {
         emit("error", { message: err instanceof Error ? err.message : "stream_failed" });
