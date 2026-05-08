@@ -68,20 +68,31 @@ export default function LoginPage() {
       />
 
       {/* Animated dotted glow */}
-      <DottedGlowBackground
-        className="pointer-events-none absolute inset-0 -z-10 mask-radial-to-90% mask-radial-at-center"
-        opacity={0.9}
-        gap={14}
-        radius={1.6}
-        color="rgba(149, 199, 234, 0.5)"
-        darkColor="rgba(149, 199, 234, 0.55)"
-        glowColor="rgba(31, 224, 255, 0.95)"
-        darkGlowColor="rgba(31, 224, 255, 0.95)"
-        backgroundOpacity={0}
-        speedMin={0.3}
-        speedMax={1.6}
-        speedScale={1}
-      />
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 -z-10"
+        style={{
+          WebkitMaskImage:
+            "radial-gradient(ellipse 90% 90% at 50% 50%, #000 0%, #000 60%, transparent 100%)",
+          maskImage:
+            "radial-gradient(ellipse 90% 90% at 50% 50%, #000 0%, #000 60%, transparent 100%)",
+        }}
+      >
+        <DottedGlowBackground
+          className="absolute inset-0"
+          opacity={1}
+          gap={16}
+          radius={1.8}
+          color="rgba(180, 220, 255, 0.85)"
+          darkColor="rgba(180, 220, 255, 0.85)"
+          glowColor="rgba(31, 224, 255, 1)"
+          darkGlowColor="rgba(31, 224, 255, 1)"
+          backgroundOpacity={0}
+          speedMin={0.3}
+          speedMax={1.6}
+          speedScale={1}
+        />
+      </div>
 
       {/* Glass modal */}
       <motion.div
