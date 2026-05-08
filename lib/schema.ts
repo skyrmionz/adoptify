@@ -3,19 +3,13 @@ export const ensureSchemaSql = `
   CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
   CREATE TABLE IF NOT EXISTS users (
-    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    email       TEXT UNIQUE NOT NULL,
-    name        TEXT,
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    email          TEXT UNIQUE NOT NULL,
+    name           TEXT,
+    password_hash  BYTEA,
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
   );
-
-  CREATE TABLE IF NOT EXISTS auth_tokens (
-    token       TEXT PRIMARY KEY,
-    user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    expires_at  TIMESTAMPTZ NOT NULL,
-    consumed_at TIMESTAMPTZ
-  );
-  CREATE INDEX IF NOT EXISTS auth_tokens_expires_idx ON auth_tokens(expires_at);
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash BYTEA;
 
   CREATE TABLE IF NOT EXISTS sessions (
     id          TEXT PRIMARY KEY,

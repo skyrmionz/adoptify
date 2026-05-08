@@ -1,10 +1,10 @@
 import { cookies } from "next/headers";
 import { query, queryOne } from "./db";
 import { randomToken } from "./crypto";
+import { hashPassword, verifyPassword } from "./passwords";
 
 const SESSION_COOKIE = "adoptify_session";
 const SESSION_TTL_DAYS = 30;
-const TOKEN_TTL_MINUTES = 15;
 
 export type SessionUser = {
   id: string;
@@ -12,40 +12,41 @@ export type SessionUser = {
   name: string | null;
 };
 
-export async function getOrCreateUser(email: string): Promise<SessionUser> {
-  const normalized = email.trim().toLowerCase();
-  const existing = await queryOne<SessionUser>(
-    `SELECT id, email, name FROM users WHERE email = $1`,
-    [normalized],
-  );
-  if (existing) return existing;
-  const created = await queryOne<SessionUser>(
-    `INSERT INTO users (email) VALUES ($1) RETURNING id, email, name`,
-    [normalized],
-  );
-  if (!created) throw new Error("Failed to create user");
-  return created;
+type UserRow = SessionUser & { password_hash: Buffer | null };
+
+function normalizeEmail(email: string): string {
+  return email.trim().toLowerCase();
 }
 
-export async function issueMagicLinkToken(userId: string): Promise<string> {
-  const token = randomToken(24);
-  const expires = new Date(Date.now() + TOKEN_TTL_MINUTES * 60_000);
-  await query(
-    `INSERT INTO auth_tokens (token, user_id, expires_at) VALUES ($1, $2, $3)`,
-    [token, userId, expires.toISOString()],
+export async function findUserByEmail(email: string): Promise<UserRow | null> {
+  return await queryOne<UserRow>(
+    `SELECT id, email, name, password_hash FROM users WHERE email = $1`,
+    [normalizeEmail(email)],
   );
-  return token;
 }
 
-export async function consumeMagicLinkToken(token: string): Promise<string | null> {
-  const row = await queryOne<{ user_id: string }>(
-    `UPDATE auth_tokens
-     SET consumed_at = NOW()
-     WHERE token = $1 AND consumed_at IS NULL AND expires_at > NOW()
-     RETURNING user_id`,
-    [token],
+export async function createUserWithPassword(args: {
+  email: string;
+  password: string;
+  name?: string | null;
+}): Promise<SessionUser> {
+  const email = normalizeEmail(args.email);
+  const hash = await hashPassword(args.password);
+  const row = await queryOne<SessionUser>(
+    `INSERT INTO users (email, name, password_hash) VALUES ($1, $2, $3)
+     RETURNING id, email, name`,
+    [email, args.name ?? null, hash],
   );
-  return row?.user_id ?? null;
+  if (!row) throw new Error("Failed to create user");
+  return row;
+}
+
+export async function authenticateUser(email: string, password: string): Promise<SessionUser | null> {
+  const row = await findUserByEmail(email);
+  if (!row || !row.password_hash) return null;
+  const ok = await verifyPassword(password, row.password_hash);
+  if (!ok) return null;
+  return { id: row.id, email: row.email, name: row.name };
 }
 
 export async function createSession(userId: string): Promise<string> {
