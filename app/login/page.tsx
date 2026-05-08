@@ -7,6 +7,7 @@ import Image from "next/image";
 import { DottedGlowBackground } from "@/components/ui/dotted-glow-background";
 
 type Mode = "login" | "signup";
+type Phase = "auth" | "welcome" | "exiting";
 
 function firstNameOf(user: { name: string | null; email: string }): string {
   if (user.name) {
@@ -31,6 +32,7 @@ export default function LoginPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [welcome, setWelcome] = useState<{ firstName: string } | null>(null);
+  const [phase, setPhase] = useState<Phase>("auth");
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -66,6 +68,7 @@ export default function LoginPage() {
       // Prefetch /missions so the navigation under the welcome screen is instant.
       router.prefetch("/missions");
       setWelcome({ firstName });
+      setPhase("welcome");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
       setSubmitting(false);
@@ -73,7 +76,15 @@ export default function LoginPage() {
   }
 
   return (
-    <main
+    <motion.main
+      animate={{ opacity: phase === "exiting" ? 0 : 1 }}
+      transition={{ duration: 0.55, ease: [0.32, 0.72, 0, 1] }}
+      onAnimationComplete={() => {
+        if (phase === "exiting") {
+          router.push("/missions");
+          router.refresh();
+        }
+      }}
       className="relative min-h-screen flex items-center justify-center px-6 overflow-hidden"
       style={{
         background:
@@ -112,10 +123,7 @@ export default function LoginPage() {
           <WelcomeScreen
             key="welcome"
             firstName={welcome.firstName}
-            onDone={() => {
-              router.push("/missions");
-              router.refresh();
-            }}
+            onDone={() => setPhase("exiting")}
           />
         ) : (
           <motion.div
@@ -262,7 +270,7 @@ export default function LoginPage() {
           </motion.div>
         )}
       </AnimatePresence>
-    </main>
+    </motion.main>
   );
 }
 
