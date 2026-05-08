@@ -1,10 +1,13 @@
-import { Sidebar } from "./Sidebar";
-import { TopBar } from "./TopBar";
+import { Sidebar } from "@/components/shell/Sidebar";
+import { TopBar } from "@/components/shell/TopBar";
+import { PageTransition } from "@/components/shell/PageTransition";
 import { getSessionUser } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { queryOne } from "@/lib/db";
 
-export async function ShellLayout({ children }: { children: React.ReactNode }) {
+export const runtime = "nodejs";
+
+export default async function AppShellLayout({ children }: { children: React.ReactNode }) {
   const user = await getSessionUser();
   if (!user) redirect("/login");
 
@@ -13,7 +16,6 @@ export async function ShellLayout({ children }: { children: React.ReactNode }) {
      WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1`,
     [user.id],
   );
-
   const orgName = conn?.org_name ?? (conn?.instance_url ? new URL(conn.instance_url).hostname : undefined);
 
   return (
@@ -21,7 +23,9 @@ export async function ShellLayout({ children }: { children: React.ReactNode }) {
       <Sidebar />
       <div className="flex-1 flex flex-col min-w-0">
         <TopBar user={user} orgName={orgName} />
-        <main className="flex-1 px-8 py-10 max-w-6xl w-full mx-auto">{children}</main>
+        <main className="flex-1 px-8 py-10 max-w-6xl w-full mx-auto">
+          <PageTransition>{children}</PageTransition>
+        </main>
       </div>
     </div>
   );

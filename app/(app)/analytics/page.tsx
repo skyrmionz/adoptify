@@ -1,8 +1,6 @@
-import { ShellLayout } from "@/components/shell/ShellLayout";
 import { KpiCard } from "@/components/analytics/KpiCard";
 import { ConsumptionChart } from "@/components/analytics/ConsumptionChart";
 import { getSessionUser } from "@/lib/auth";
-import { redirect } from "next/navigation";
 import { queryOne } from "@/lib/db";
 
 export const runtime = "nodejs";
@@ -17,7 +15,7 @@ type Snapshot = {
 
 export default async function AnalyticsPage() {
   const user = await getSessionUser();
-  if (!user) redirect("/login");
+  if (!user) return null;
 
   const latest = await queryOne<{ score: number | null; scanned_at: string; snapshot_json: Snapshot }>(
     `SELECT score, scanned_at, snapshot_json
@@ -43,7 +41,7 @@ export default async function AnalyticsPage() {
   const apiPct = apiMax > 0 ? Math.round((apiUsed / apiMax) * 100) : 0;
 
   return (
-    <ShellLayout>
+    <>
       <div className="mb-10">
         <div className="text-xs uppercase tracking-[0.25em] text-[var(--color-text-muted)] mb-2">Org overview</div>
         <h1 className="text-3xl font-semibold tracking-tight">Analytics</h1>
@@ -92,6 +90,6 @@ export default async function AnalyticsPage() {
         <KpiCard label="Apex classes" value={`${snap.code?.classes ?? 0}`} delta={snap.code?.coverage_pct != null ? { value: `${snap.code.coverage_pct}% covered`, positive: (snap.code.coverage_pct ?? 0) >= 75 } : undefined} />
         <KpiCard label="Invocable methods" value={`${snap.code?.invocable ?? 0}`} />
       </div>
-    </ShellLayout>
+    </>
   );
 }

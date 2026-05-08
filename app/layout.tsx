@@ -20,7 +20,7 @@ const avantGarde = localFont({
 });
 
 export const metadata: Metadata = {
-  title: "Adoptify — Agentforce adoption companion",
+  title: "adoptify — Make Agentforce work for you",
   description: "Track your Agentforce adoption journey, learn through interactive missions, and assess your org against real readiness criteria.",
   icons: {
     icon: [{ url: "/logos/adoptify.png", type: "image/png" }],

@@ -2,8 +2,9 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { motion } from "motion/react";
+import { motion, AnimatePresence } from "motion/react";
 import Image from "next/image";
+import { DottedGlowBackground } from "@/components/ui/dotted-glow-background";
 
 type Mode = "login" | "signup";
 
@@ -12,6 +13,7 @@ export default function LoginPage() {
   const [mode, setMode] = useState<Mode>("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
   const [name, setName] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -19,11 +21,23 @@ export default function LoginPage() {
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+
+    if (mode === "signup") {
+      if (password.length < 8) {
+        setError("Password must be at least 8 characters");
+        return;
+      }
+      if (password !== confirm) {
+        setError("Passwords do not match");
+        return;
+      }
+    }
+
     setSubmitting(true);
     try {
       const endpoint = mode === "signup" ? "/api/auth/signup" : "/api/auth/login";
       const payload = mode === "signup"
-        ? { email, password, name: name || null }
+        ? { email, password, confirm, name: name || null }
         : { email, password };
       const res = await fetch(endpoint, {
         method: "POST",
@@ -42,112 +56,173 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="min-h-screen flex items-center justify-center px-6">
+    <main className="relative min-h-screen flex items-center justify-center px-6 overflow-hidden">
+      {/* Salesforce-blue radial gradient backdrop */}
+      <div
+        aria-hidden
+        className="absolute inset-0 -z-20"
+        style={{
+          background:
+            "radial-gradient(80% 60% at 50% 0%, rgba(0, 161, 224, 0.45) 0%, rgba(0, 161, 224, 0.12) 35%, rgba(11, 18, 32, 0) 70%), radial-gradient(60% 50% at 100% 100%, rgba(31, 224, 255, 0.18) 0%, rgba(11, 18, 32, 0) 60%), #0B1220",
+        }}
+      />
+
+      {/* Animated dotted glow */}
+      <DottedGlowBackground
+        className="pointer-events-none absolute inset-0 -z-10 mask-radial-to-90% mask-radial-at-center"
+        opacity={0.9}
+        gap={14}
+        radius={1.6}
+        color="rgba(149, 199, 234, 0.5)"
+        darkColor="rgba(149, 199, 234, 0.55)"
+        glowColor="rgba(31, 224, 255, 0.95)"
+        darkGlowColor="rgba(31, 224, 255, 0.95)"
+        backgroundOpacity={0}
+        speedMin={0.3}
+        speedMax={1.6}
+        speedScale={1}
+      />
+
+      {/* Glass modal */}
       <motion.div
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.4, ease: [0.32, 0.72, 0, 1] }}
-        className="w-full max-w-md surface-card p-8"
+        transition={{ duration: 0.5, ease: [0.32, 0.72, 0, 1] }}
+        className="relative w-full max-w-md rounded-2xl border border-white/10 bg-white/[0.04] backdrop-blur-2xl p-8 shadow-[0_8px_40px_rgba(0,0,0,0.45),inset_0_1px_0_rgba(255,255,255,0.06)]"
       >
-        <div className="flex items-center gap-3 mb-8">
-          <Image
-            src="/logos/adoptify.png"
-            alt="Adoptify"
-            width={36}
-            height={36}
-            className="h-9 w-9 object-contain"
-            priority
-          />
-          <div>
-            <div className="text-lg font-semibold tracking-tight">Adoptify</div>
-            <div className="text-xs text-[var(--color-text-muted)]">Agentforce adoption companion</div>
-          </div>
-          <div className="ml-auto opacity-50">
-            <Image src="/logos/salesforce.png" alt="Salesforce" width={64} height={20} />
-          </div>
-        </div>
+        {/* Inner gradient sheen */}
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-0 rounded-2xl"
+          style={{
+            background:
+              "linear-gradient(135deg, rgba(255,255,255,0.06) 0%, rgba(255,255,255,0) 35%), radial-gradient(80% 60% at 50% 0%, rgba(0,161,224,0.18), transparent 60%)",
+          }}
+        />
 
-        <div className="flex gap-2 mb-6 text-sm">
-          <button
-            type="button"
-            onClick={() => { setMode("login"); setError(null); }}
-            className={
-              "flex-1 h-9 rounded-md border transition " +
-              (mode === "login"
-                ? "bg-[var(--color-surface-2)] border-[var(--color-border-strong)] text-[var(--color-text)]"
-                : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]")
-            }
-          >
-            Sign in
-          </button>
-          <button
-            type="button"
-            onClick={() => { setMode("signup"); setError(null); }}
-            className={
-              "flex-1 h-9 rounded-md border transition " +
-              (mode === "signup"
-                ? "bg-[var(--color-surface-2)] border-[var(--color-border-strong)] text-[var(--color-text)]"
-                : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]")
-            }
-          >
-            Create account
-          </button>
-        </div>
-
-        <form onSubmit={onSubmit}>
-          <h1 className="text-xl font-semibold mb-1">
-            {mode === "signup" ? "Create your account" : "Welcome back"}
-          </h1>
-          <p className="text-sm text-[var(--color-text-muted)] mb-6">
-            {mode === "signup"
-              ? "Track your Agentforce adoption journey from day one."
-              : "Sign in to pick up where you left off."}
-          </p>
-
-          {mode === "signup" && (
-            <Field
-              label="Name"
-              type="text"
-              value={name}
-              onChange={setName}
-              placeholder="Optional"
-              autoComplete="name"
+        <div className="relative">
+          <div className="flex items-center gap-3 mb-8">
+            <Image
+              src="/logos/adoptify.png"
+              alt="adoptify"
+              width={36}
+              height={36}
+              className="h-9 w-9 object-contain drop-shadow-[0_0_18px_rgba(31,224,255,0.5)]"
+              priority
             />
-          )}
+            <div>
+              <div className="text-lg font-semibold tracking-tight lowercase">adoptify</div>
+              <div className="text-xs text-[var(--color-text-muted)]">Make Agentforce work for you</div>
+            </div>
+            <div className="ml-auto opacity-60">
+              <Image src="/logos/salesforce.png" alt="Salesforce" width={64} height={20} />
+            </div>
+          </div>
 
-          <Field
-            label="Email"
-            type="email"
-            value={email}
-            onChange={setEmail}
-            placeholder="you@company.com"
-            required
-            autoComplete="email"
-          />
+          <div className="flex gap-2 mb-6 text-sm">
+            <button
+              type="button"
+              onClick={() => { setMode("login"); setError(null); }}
+              className={
+                "flex-1 h-9 rounded-md border transition " +
+                (mode === "login"
+                  ? "bg-white/[0.07] border-white/15 text-[var(--color-text)]"
+                  : "border-white/10 text-[var(--color-text-muted)] hover:text-[var(--color-text)]")
+              }
+            >
+              Sign in
+            </button>
+            <button
+              type="button"
+              onClick={() => { setMode("signup"); setError(null); }}
+              className={
+                "flex-1 h-9 rounded-md border transition " +
+                (mode === "signup"
+                  ? "bg-white/[0.07] border-white/15 text-[var(--color-text)]"
+                  : "border-white/10 text-[var(--color-text-muted)] hover:text-[var(--color-text)]")
+              }
+            >
+              Create account
+            </button>
+          </div>
 
-          <Field
-            label="Password"
-            type="password"
-            value={password}
-            onChange={setPassword}
-            placeholder={mode === "signup" ? "At least 8 characters" : "••••••••"}
-            required
-            autoComplete={mode === "signup" ? "new-password" : "current-password"}
-            minLength={mode === "signup" ? 8 : undefined}
-          />
+          <AnimatePresence mode="wait" initial={false}>
+            <motion.form
+              key={mode}
+              onSubmit={onSubmit}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ duration: 0.22, ease: [0.32, 0.72, 0, 1] }}
+            >
+              <h1 className="text-xl font-semibold mb-1">
+                {mode === "signup" ? "Create your account" : "Welcome back"}
+              </h1>
+              <p className="text-sm text-[var(--color-text-muted)] mb-6">
+                {mode === "signup"
+                  ? "Track your Agentforce adoption journey from day one."
+                  : "Sign in to pick up where you left off."}
+              </p>
 
-          {error && <p className="text-xs text-[var(--color-danger)] mt-2">{error}</p>}
+              {mode === "signup" && (
+                <Field
+                  label="Name"
+                  type="text"
+                  value={name}
+                  onChange={setName}
+                  placeholder="Optional"
+                  autoComplete="name"
+                />
+              )}
 
-          <button
-            type="submit"
-            disabled={submitting}
-            className="mt-6 w-full h-11 rounded-md bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50 text-white font-semibold tracking-wide transition"
-          >
-            {submitting
-              ? mode === "signup" ? "Creating account…" : "Signing in…"
-              : mode === "signup" ? "Create account" : "Sign in"}
-          </button>
-        </form>
+              <Field
+                label="Email"
+                type="email"
+                value={email}
+                onChange={setEmail}
+                placeholder="you@company.com"
+                required
+                autoComplete="email"
+              />
+
+              <Field
+                label="Password"
+                type="password"
+                value={password}
+                onChange={setPassword}
+                placeholder={mode === "signup" ? "At least 8 characters" : "••••••••"}
+                required
+                autoComplete={mode === "signup" ? "new-password" : "current-password"}
+                minLength={mode === "signup" ? 8 : undefined}
+              />
+
+              {mode === "signup" && (
+                <Field
+                  label="Confirm password"
+                  type="password"
+                  value={confirm}
+                  onChange={setConfirm}
+                  placeholder="Re-enter your password"
+                  required
+                  autoComplete="new-password"
+                  minLength={8}
+                />
+              )}
+
+              {error && <p className="text-xs text-[var(--color-danger)] mt-2">{error}</p>}
+
+              <button
+                type="submit"
+                disabled={submitting}
+                className="mt-6 w-full h-11 rounded-md bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50 text-white font-semibold tracking-wide transition shadow-[0_0_24px_rgba(0,161,224,0.35)]"
+              >
+                {submitting
+                  ? mode === "signup" ? "Creating account…" : "Signing in…"
+                  : mode === "signup" ? "Create account" : "Sign in"}
+              </button>
+            </motion.form>
+          </AnimatePresence>
+        </div>
       </motion.div>
     </main>
   );
@@ -185,7 +260,7 @@ function Field({
         required={required}
         autoComplete={autoComplete}
         minLength={minLength}
-        className="w-full h-11 px-3 rounded-md bg-[var(--color-surface-2)] border border-[var(--color-border)] focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent)]/30 outline-none text-[var(--color-text)] placeholder:text-[var(--color-text-subtle)]"
+        className="w-full h-11 px-3 rounded-md bg-white/[0.04] border border-white/10 focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent)]/30 outline-none text-[var(--color-text)] placeholder:text-[var(--color-text-subtle)] transition"
       />
     </label>
   );

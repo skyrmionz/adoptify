@@ -1,11 +1,10 @@
-import { ShellLayout } from "@/components/shell/ShellLayout";
 import { Chat } from "@/components/agent/Chat";
 
 export const runtime = "nodejs";
 
 export default function AgentPage() {
   return (
-    <ShellLayout>
+    <>
       <div className="mb-6">
         <div className="text-xs uppercase tracking-[0.25em] text-[var(--color-text-muted)] mb-2">Conversation</div>
         <h1 className="text-3xl font-semibold tracking-tight">Agent</h1>
@@ -14,6 +13,6 @@ export default function AgentPage() {
         </p>
       </div>
       <Chat />
-    </ShellLayout>
+    </>
   );
 }

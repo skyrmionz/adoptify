@@ -1,15 +1,13 @@
-import { ShellLayout } from "@/components/shell/ShellLayout";
 import { sections, totalMissionCount } from "@/content";
 import { getAllProgress } from "@/lib/progress";
 import { getSessionUser } from "@/lib/auth";
-import { redirect } from "next/navigation";
 import { CheckCircle2, Circle, Clock } from "lucide-react";
 
 export const runtime = "nodejs";
 
 export default async function ProgressPage() {
   const user = await getSessionUser();
-  if (!user) redirect("/login");
+  if (!user) return null;
   const progress = await getAllProgress(user.id);
   const byId = new Map(progress.map((p) => [p.mission_id, p]));
   const total = totalMissionCount();
@@ -17,7 +15,7 @@ export default async function ProgressPage() {
   const pct = total === 0 ? 0 : Math.round((completed / total) * 100);
 
   return (
-    <ShellLayout>
+    <>
       <div className="mb-10">
         <div className="text-xs uppercase tracking-[0.25em] text-[var(--color-text-muted)] mb-2">Adoption</div>
         <h1 className="text-3xl font-semibold tracking-tight">Progress</h1>
@@ -88,6 +86,6 @@ export default async function ProgressPage() {
           );
         })}
       </div>
-    </ShellLayout>
+    </>
   );
 }

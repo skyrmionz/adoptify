@@ -9,7 +9,7 @@ import {
 export const runtime = "nodejs";
 
 export async function POST(req: Request) {
-  let body: { email?: string; password?: string; name?: string };
+  let body: { email?: string; password?: string; confirm?: string; name?: string };
   try {
     body = await req.json();
   } catch {
@@ -18,6 +18,7 @@ export async function POST(req: Request) {
 
   const email = typeof body.email === "string" ? body.email.trim() : "";
   const password = typeof body.password === "string" ? body.password : "";
+  const confirm = typeof body.confirm === "string" ? body.confirm : null;
   const name = typeof body.name === "string" ? body.name.trim() : "";
 
   if (!/.+@.+\..+/.test(email)) {
@@ -25,6 +26,9 @@ export async function POST(req: Request) {
   }
   if (password.length < 8) {
     return NextResponse.json({ error: "Password must be at least 8 characters" }, { status: 400 });
+  }
+  if (confirm !== null && confirm !== password) {
+    return NextResponse.json({ error: "Passwords do not match" }, { status: 400 });
   }
 
   const existing = await findUserByEmail(email);

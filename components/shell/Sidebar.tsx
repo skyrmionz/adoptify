@@ -31,7 +31,7 @@ export function Sidebar() {
           priority
         />
         <div className="flex flex-col">
-          <span className="text-sm font-semibold tracking-tight">Adoptify</span>
+          <span className="text-sm font-semibold tracking-tight lowercase">adoptify</span>
           <span className="text-[10px] uppercase tracking-[0.2em] text-[var(--color-text-subtle)]">Agentforce</span>
         </div>
       </div>

@@ -1,7 +1,6 @@
-import { ShellLayout } from "@/components/shell/ShellLayout";
 import { getMission } from "@/content";
 import { getSessionUser } from "@/lib/auth";
-import { redirect, notFound } from "next/navigation";
+import { notFound } from "next/navigation";
 import { getProgress } from "@/lib/progress";
 import { MissionRenderer } from "@/components/missions/MissionRenderer";
 import { queryOne } from "@/lib/db";
@@ -15,7 +14,7 @@ type Params = { section: string; mission: string };
 export default async function MissionPage(props: { params: Promise<Params> }) {
   const { section: sectionSlug, mission: missionSlug } = await props.params;
   const user = await getSessionUser();
-  if (!user) redirect("/login");
+  if (!user) return null;
 
   const found = getMission(sectionSlug, missionSlug);
   if (!found) notFound();
@@ -28,7 +27,7 @@ export default async function MissionPage(props: { params: Promise<Params> }) {
   );
 
   return (
-    <ShellLayout>
+    <>
       <div className="mb-6">
         <Link
           href="/missions"
@@ -49,6 +48,6 @@ export default async function MissionPage(props: { params: Promise<Params> }) {
         initialStatus={progress?.status ?? "not_started"}
         connected={!!conn}
       />
-    </ShellLayout>
+    </>
   );
 }

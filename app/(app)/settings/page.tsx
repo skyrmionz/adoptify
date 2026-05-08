@@ -1,6 +1,4 @@
-import { ShellLayout } from "@/components/shell/ShellLayout";
 import { getSessionUser } from "@/lib/auth";
-import { redirect } from "next/navigation";
 import { query } from "@/lib/db";
 import { ConnectOrgPanel } from "@/components/settings/ConnectOrgPanel";
 
@@ -18,7 +16,7 @@ type ConnRow = {
 export default async function SettingsPage(props: { searchParams: Promise<{ sf_connected?: string; sf_error?: string }> }) {
   const sp = await props.searchParams;
   const user = await getSessionUser();
-  if (!user) redirect("/login");
+  if (!user) return null;
 
   const conns = await query<ConnRow>(
     `SELECT id, instance_url, org_name, is_sandbox, last_scanned_at, created_at
@@ -27,7 +25,7 @@ export default async function SettingsPage(props: { searchParams: Promise<{ sf_c
   );
 
   return (
-    <ShellLayout>
+    <>
       <div className="mb-10">
         <div className="text-xs uppercase tracking-[0.25em] text-[var(--color-text-muted)] mb-2">Account</div>
         <h1 className="text-3xl font-semibold tracking-tight">Settings</h1>
@@ -43,7 +41,7 @@ export default async function SettingsPage(props: { searchParams: Promise<{ sf_c
       </section>
 
       <ConnectOrgPanel connections={conns} flash={sp} />
-    </ShellLayout>
+    </>
   );
 }
 

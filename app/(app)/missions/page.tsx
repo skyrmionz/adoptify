@@ -1,8 +1,6 @@
-import { ShellLayout } from "@/components/shell/ShellLayout";
 import { sections } from "@/content";
 import { getAllProgress } from "@/lib/progress";
 import { getSessionUser } from "@/lib/auth";
-import { redirect } from "next/navigation";
 import Link from "next/link";
 import { CheckCircle2, Circle, Clock } from "lucide-react";
 
@@ -10,12 +8,12 @@ export const runtime = "nodejs";
 
 export default async function MissionsPage() {
   const user = await getSessionUser();
-  if (!user) redirect("/login");
+  if (!user) return null; // layout redirects to /login
   const progress = await getAllProgress(user.id);
   const byId = new Map(progress.map((p) => [p.mission_id, p]));
 
   return (
-    <ShellLayout>
+    <>
       <div className="mb-10">
         <div className="text-xs uppercase tracking-[0.25em] text-[var(--color-text-muted)] mb-2">Your journey</div>
         <h1 className="text-3xl font-semibold tracking-tight">Missions</h1>
@@ -68,6 +66,6 @@ export default async function MissionsPage() {
           </section>
         );
       })}
-    </ShellLayout>
+    </>
   );
 }
