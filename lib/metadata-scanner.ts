@@ -55,6 +55,23 @@ export type Snapshot = {
     agentforce_conversations_used?: number;
     agentforce_conversations_max?: number;
     api_used_pct: number;
+    daily_series?: { date: string; conversations: number }[]; // last 30 days
+    forecast_month_end?: number; // simple linear forecast based on the last 14d slope
+  };
+  runtime: {
+    // Conversation volume aggregations.
+    sessions_30d: number;
+    sessions_7d: number;
+    sessions_24h: number;
+    daily_by_channel: { date: string; values: Record<string, number> }[]; // last 30d
+    by_channel_30d: Record<string, number>;
+    by_agent_30d: { agentId: string; name: string; sessions: number; resolved: number; escalated: number; active: number }[];
+    by_status_30d: { resolved: number; escalated: number; active: number; abandoned: number };
+    avg_messages_per_session_30d: number;
+    avg_handle_time_seconds_30d: number;
+    feedback_30d: { positive: number; negative: number; neutral: number };
+    hour_dow_heatmap: number[][]; // [dayOfWeek 0..6][hour 0..23] = count
+    actions_30d: { name: string; calls: number; success: number; errors: number }[];
   };
 };
 
@@ -131,15 +148,97 @@ export function buildMockScan(): ScanResult {
     },
     consumption: {
       api_used_pct: 5,
+      daily_series: buildMockDailySeries(),
+      forecast_month_end: 4200,
     },
+    runtime: buildMockRuntime(),
   };
   return scoreSnapshot(snapshot, true);
+}
+
+function buildMockDailySeries(): { date: string; conversations: number }[] {
+  const out: { date: string; conversations: number }[] = [];
+  const today = new Date();
+  for (let i = 29; i >= 0; i--) {
+    const d = new Date(today);
+    d.setDate(today.getDate() - i);
+    const dow = d.getDay();
+    // Weekday volume higher than weekends; trending up over the month.
+    const base = (dow === 0 || dow === 6) ? 30 : 80;
+    const trend = (29 - i) * 1.8;
+    const noise = Math.sin(i / 2) * 15;
+    out.push({ date: d.toISOString().slice(0, 10), conversations: Math.max(0, Math.round(base + trend + noise)) });
+  }
+  return out;
+}
+
+function buildMockRuntime(): Snapshot["runtime"] {
+  const series = buildMockDailySeries();
+  const channels = ["Web", "WhatsApp", "Slack", "SMS", "Embedded"];
+  const channelMix = [0.45, 0.18, 0.16, 0.12, 0.09];
+  const daily_by_channel = series.map((d) => {
+    const values: Record<string, number> = {};
+    channels.forEach((c, idx) => {
+      const noise = Math.sin(idx + new Date(d.date).getDate()) * 0.05;
+      values[c] = Math.round(d.conversations * (channelMix[idx] + noise));
+    });
+    return { date: d.date, values };
+  });
+  const by_channel_30d: Record<string, number> = {};
+  for (const d of daily_by_channel) {
+    for (const [k, v] of Object.entries(d.values)) by_channel_30d[k] = (by_channel_30d[k] ?? 0) + v;
+  }
+  const total = series.reduce((a, b) => a + b.conversations, 0);
+  const last7 = series.slice(-7).reduce((a, b) => a + b.conversations, 0);
+  const last24 = series[series.length - 1]?.conversations ?? 0;
+  const heatmap = Array.from({ length: 7 }, (_, dow) =>
+    Array.from({ length: 24 }, (_, h) => {
+      // Workday humps 9-12 and 13-17, weekends quieter.
+      const isWeekend = dow === 0 || dow === 6;
+      const peak = (h >= 9 && h <= 11) || (h >= 13 && h <= 16) ? 1 : (h >= 7 && h <= 19 ? 0.5 : 0.1);
+      return Math.round((isWeekend ? 6 : 22) * peak * (0.85 + Math.random() * 0.3));
+    }),
+  );
+  return {
+    sessions_30d: total,
+    sessions_7d: last7,
+    sessions_24h: last24,
+    daily_by_channel,
+    by_channel_30d,
+    by_agent_30d: [
+      { agentId: "a1", name: "Service Agent", sessions: Math.round(total * 0.62), resolved: Math.round(total * 0.45), escalated: Math.round(total * 0.12), active: Math.round(total * 0.05) },
+      { agentId: "a2", name: "Sales Coach", sessions: Math.round(total * 0.21), resolved: Math.round(total * 0.16), escalated: Math.round(total * 0.03), active: Math.round(total * 0.02) },
+      { agentId: "a3", name: "Internal Copilot", sessions: Math.round(total * 0.17), resolved: Math.round(total * 0.13), escalated: Math.round(total * 0.02), active: Math.round(total * 0.02) },
+    ],
+    by_status_30d: {
+      resolved: Math.round(total * 0.74),
+      escalated: Math.round(total * 0.17),
+      active: Math.round(total * 0.06),
+      abandoned: Math.round(total * 0.03),
+    },
+    avg_messages_per_session_30d: 6.8,
+    avg_handle_time_seconds_30d: 184,
+    feedback_30d: {
+      positive: Math.round(total * 0.34),
+      negative: Math.round(total * 0.06),
+      neutral: Math.round(total * 0.60),
+    },
+    hour_dow_heatmap: heatmap,
+    actions_30d: [
+      { name: "Answer Questions with Knowledge", calls: 1124, success: 1098, errors: 26 },
+      { name: "Identify Record by Name", calls: 612, success: 605, errors: 7 },
+      { name: "Triage_Case", calls: 414, success: 392, errors: 22 },
+      { name: "Summarize Record", calls: 388, success: 385, errors: 3 },
+      { name: "Update Case Owner (Flow)", calls: 234, success: 218, errors: 16 },
+      { name: "Pricing Lookup (External)", calls: 189, success: 167, errors: 22 },
+    ],
+  };
 }
 
 // --- Real scan --------------------------------------------------
 
 export async function runScan(creds: SfCredentials): Promise<ScanResult> {
-  const [foundations, automation, code, data, agents, access, limits, agentforceSetup, channels, integrations, dataDepth] = await Promise.all([
+  const [foundations, automation, code, data, agents, access, limits, agentforceSetup, channels, integrations, dataDepth, runtime] = await Promise.all([
     scanFoundations(creds),
     scanAutomation(creds),
     scanCode(creds),
@@ -151,11 +250,211 @@ export async function runScan(creds: SfCredentials): Promise<ScanResult> {
     scanChannels(creds),
     scanIntegrations(creds),
     scanDataDepth(creds),
+    scanRuntime(creds),
   ]);
   const apiPct = limits.daily_api_max > 0 ? Math.round((limits.daily_api_used / limits.daily_api_max) * 100) : 0;
-  const consumption: Snapshot["consumption"] = { api_used_pct: apiPct };
-  const snapshot: Snapshot = { foundations, automation, code, data, agents, access, limits, agentforceSetup, channels, integrations, dataDepth, consumption };
+  const consumption: Snapshot["consumption"] = {
+    api_used_pct: apiPct,
+    daily_series: runtime.daily_by_channel.map((d) => ({
+      date: d.date,
+      conversations: Object.values(d.values).reduce((a, b) => a + b, 0),
+    })),
+    forecast_month_end: forecastMonthEnd(runtime.daily_by_channel),
+  };
+  const snapshot: Snapshot = { foundations, automation, code, data, agents, access, limits, agentforceSetup, channels, integrations, dataDepth, consumption, runtime };
   return scoreSnapshot(snapshot, false);
+}
+
+function forecastMonthEnd(daily: { date: string; values: Record<string, number> }[]): number {
+  // Simple linear forecast: average of last 14 days × days remaining in month, plus MTD actual.
+  if (daily.length === 0) return 0;
+  const now = new Date();
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+  const daysInMonth = monthEnd.getDate();
+  const daysElapsed = now.getDate();
+  const daysRemaining = daysInMonth - daysElapsed;
+
+  let mtd = 0;
+  for (const d of daily) {
+    const dDate = new Date(d.date);
+    if (dDate >= monthStart && dDate <= now) {
+      mtd += Object.values(d.values).reduce((a, b) => a + b, 0);
+    }
+  }
+  const last14 = daily.slice(-14);
+  const avg14 = last14.length === 0
+    ? 0
+    : last14.reduce((acc, d) => acc + Object.values(d.values).reduce((a, b) => a + b, 0), 0) / last14.length;
+  return Math.round(mtd + avg14 * daysRemaining);
+}
+
+async function scanRuntime(creds: SfCredentials): Promise<Snapshot["runtime"]> {
+  // Best-effort runtime scan. Many orgs won't have these tables populated yet —
+  // we degrade gracefully to all-zeros so the dashboard renders an empty state.
+  const empty: Snapshot["runtime"] = {
+    sessions_30d: 0,
+    sessions_7d: 0,
+    sessions_24h: 0,
+    daily_by_channel: [],
+    by_channel_30d: {},
+    by_agent_30d: [],
+    by_status_30d: { resolved: 0, escalated: 0, active: 0, abandoned: 0 },
+    avg_messages_per_session_30d: 0,
+    avg_handle_time_seconds_30d: 0,
+    feedback_30d: { positive: 0, negative: 0, neutral: 0 },
+    hour_dow_heatmap: Array.from({ length: 7 }, () => Array(24).fill(0)),
+    actions_30d: [],
+  };
+
+  // Pull MessagingSession rows for the last 30 days. We accept that some
+  // editions / installs return errors here; if so, return empty.
+  type MsRow = {
+    Id: string;
+    Status?: string;
+    EndUserChannelType?: string;
+    StartTime?: string;
+    EndTime?: string;
+    BotPlannerId?: string;
+  };
+  let sessions: MsRow[] = [];
+  try {
+    const r = await sfJson<{ records: MsRow[]; totalSize: number }>(
+      creds,
+      `/services/data/${API_VERSION}/query?q=${encodeURIComponent(
+        "SELECT Id, Status, EndUserChannelType, StartTime, EndTime, BotPlannerId FROM MessagingSession WHERE StartTime = LAST_N_DAYS:30 LIMIT 5000",
+      )}`,
+    );
+    sessions = r.records ?? [];
+  } catch {
+    return empty;
+  }
+
+  if (sessions.length === 0) return empty;
+
+  const now = new Date();
+  const days: string[] = [];
+  for (let i = 29; i >= 0; i--) {
+    const d = new Date(now);
+    d.setDate(now.getDate() - i);
+    days.push(d.toISOString().slice(0, 10));
+  }
+  const channels = new Set<string>();
+  const dailyByChannelMap = new Map<string, Map<string, number>>(); // date -> channel -> count
+  for (const day of days) dailyByChannelMap.set(day, new Map());
+  const byChannel: Record<string, number> = {};
+  const heat = Array.from({ length: 7 }, () => Array(24).fill(0));
+  const status = { resolved: 0, escalated: 0, active: 0, abandoned: 0 };
+  const byAgent = new Map<string, { sessions: number; resolved: number; escalated: number; active: number }>();
+  let last7 = 0;
+  let last24 = 0;
+  const sevenAgo = new Date(now); sevenAgo.setDate(now.getDate() - 7);
+  const dayAgo = new Date(now); dayAgo.setDate(now.getDate() - 1);
+
+  for (const s of sessions) {
+    const startStr = s.StartTime;
+    if (!startStr) continue;
+    const start = new Date(startStr);
+    const dayKey = start.toISOString().slice(0, 10);
+    const channel = s.EndUserChannelType ?? "Unknown";
+    channels.add(channel);
+    const dayMap = dailyByChannelMap.get(dayKey);
+    if (dayMap) dayMap.set(channel, (dayMap.get(channel) ?? 0) + 1);
+    byChannel[channel] = (byChannel[channel] ?? 0) + 1;
+
+    heat[start.getDay()][start.getHours()]++;
+    if (start >= sevenAgo) last7++;
+    if (start >= dayAgo) last24++;
+
+    const st = (s.Status ?? "").toLowerCase();
+    if (st === "ended" || st === "completed" || st === "ended successfully") status.resolved++;
+    else if (st === "escalated") status.escalated++;
+    else if (st === "active") status.active++;
+    else status.abandoned++;
+
+    const agentId = s.BotPlannerId ?? "unknown";
+    const agent = byAgent.get(agentId) ?? { sessions: 0, resolved: 0, escalated: 0, active: 0 };
+    agent.sessions++;
+    if (st === "ended" || st === "completed") agent.resolved++;
+    else if (st === "escalated") agent.escalated++;
+    else if (st === "active") agent.active++;
+    byAgent.set(agentId, agent);
+  }
+
+  const daily_by_channel = days.map((d) => {
+    const m = dailyByChannelMap.get(d) ?? new Map<string, number>();
+    const values: Record<string, number> = {};
+    for (const c of channels) values[c] = m.get(c) ?? 0;
+    return { date: d, values };
+  });
+
+  // ConversationEntry counts for messages-per-session and rough handle time.
+  let avgMsgsPerSession = 0;
+  let avgHandleTime = 0;
+  try {
+    const r = await sfJson<{ records: { ConversationId?: string; CreatedDate?: string }[] }>(
+      creds,
+      `/services/data/${API_VERSION}/query?q=${encodeURIComponent(
+        "SELECT ConversationId FROM ConversationEntry WHERE CreatedDate = LAST_N_DAYS:30 LIMIT 5000",
+      )}`,
+    );
+    const perSession = new Map<string, number>();
+    for (const e of r.records ?? []) {
+      if (!e.ConversationId) continue;
+      perSession.set(e.ConversationId, (perSession.get(e.ConversationId) ?? 0) + 1);
+    }
+    const counts = Array.from(perSession.values());
+    avgMsgsPerSession = counts.length === 0 ? 0 : counts.reduce((a, b) => a + b, 0) / counts.length;
+  } catch { /* best-effort */ }
+  // Handle time: use start→end where available.
+  let endedCount = 0; let totalSeconds = 0;
+  for (const s of sessions) {
+    if (s.StartTime && s.EndTime) {
+      const dur = (new Date(s.EndTime).getTime() - new Date(s.StartTime).getTime()) / 1000;
+      if (dur > 0 && dur < 24 * 3600) { totalSeconds += dur; endedCount++; }
+    }
+  }
+  avgHandleTime = endedCount === 0 ? 0 : Math.round(totalSeconds / endedCount);
+
+  // Feedback: query EinsteinFeedback if available.
+  const feedback = { positive: 0, negative: 0, neutral: 0 };
+  try {
+    type Fb = { Sentiment?: string };
+    const r = await sfJson<{ records: Fb[] }>(
+      creds,
+      `/services/data/${API_VERSION}/query?q=${encodeURIComponent(
+        "SELECT Sentiment FROM EinsteinFeedback WHERE CreatedDate = LAST_N_DAYS:30 LIMIT 5000",
+      )}`,
+    );
+    for (const f of r.records ?? []) {
+      const s = (f.Sentiment ?? "").toLowerCase();
+      if (s === "positive" || s === "good" || s === "thumbs_up") feedback.positive++;
+      else if (s === "negative" || s === "bad" || s === "thumbs_down") feedback.negative++;
+      else feedback.neutral++;
+    }
+  } catch { /* best-effort */ }
+
+  return {
+    sessions_30d: sessions.length,
+    sessions_7d: last7,
+    sessions_24h: last24,
+    daily_by_channel,
+    by_channel_30d: byChannel,
+    by_agent_30d: Array.from(byAgent.entries()).map(([agentId, v]) => ({
+      agentId,
+      name: agentId,
+      sessions: v.sessions,
+      resolved: v.resolved,
+      escalated: v.escalated,
+      active: v.active,
+    })).sort((a, b) => b.sessions - a.sessions).slice(0, 10),
+    by_status_30d: status,
+    avg_messages_per_session_30d: Math.round(avgMsgsPerSession * 10) / 10,
+    avg_handle_time_seconds_30d: avgHandleTime,
+    feedback_30d: feedback,
+    hour_dow_heatmap: heat,
+    actions_30d: [], // No reliable runtime action telemetry without Agent Studio analytics tables; leave empty.
+  };
 }
 
 type ToolingQueryResult<T> = { totalSize: number; done: boolean; records: T[] };
