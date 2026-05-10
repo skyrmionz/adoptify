@@ -27,11 +27,17 @@ export const ensureSchemaSql = `
     org_name           TEXT,
     access_token_enc   BYTEA NOT NULL,
     refresh_token_enc  BYTEA,
+    access_token_issued_at TIMESTAMPTZ,
+    access_token_expires_at TIMESTAMPTZ,
+    disconnected_at    TIMESTAMPTZ,
     is_sandbox         BOOLEAN NOT NULL DEFAULT FALSE,
     last_scanned_at    TIMESTAMPTZ,
     created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE(user_id, org_id)
   );
+  ALTER TABLE salesforce_connections ADD COLUMN IF NOT EXISTS access_token_issued_at TIMESTAMPTZ;
+  ALTER TABLE salesforce_connections ADD COLUMN IF NOT EXISTS access_token_expires_at TIMESTAMPTZ;
+  ALTER TABLE salesforce_connections ADD COLUMN IF NOT EXISTS disconnected_at TIMESTAMPTZ;
 
   CREATE TABLE IF NOT EXISTS mission_progress (
     user_id       UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -53,6 +59,28 @@ export const ensureSchemaSql = `
     findings_json  JSONB
   );
   CREATE INDEX IF NOT EXISTS org_assessments_user_idx ON org_assessments(user_id, scanned_at DESC);
+
+  CREATE TABLE IF NOT EXISTS org_diagnostics (
+    user_id       UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    answers_json  JSONB NOT NULL DEFAULT '{}'::jsonb,
+    summary_json  JSONB NOT NULL DEFAULT '{}'::jsonb,
+    blockers_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  );
+
+  CREATE TABLE IF NOT EXISTS recommended_use_cases (
+    user_id       UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    items_json    JSONB NOT NULL DEFAULT '[]'::jsonb,
+    generated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  );
+
+  CREATE TABLE IF NOT EXISTS selected_use_cases (
+    user_id       UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    use_case_json JSONB NOT NULL,
+    stage         TEXT NOT NULL DEFAULT 'agents_created',
+    selected_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  );
 
   CREATE TABLE IF NOT EXISTS chat_sessions (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),

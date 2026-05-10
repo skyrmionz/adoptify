@@ -1,6 +1,7 @@
 import { getSessionUser } from "@/lib/auth";
 import { query } from "@/lib/db";
 import { ConnectOrgPanel } from "@/components/settings/ConnectOrgPanel";
+import { isSalesforceOAuthConfigured } from "@/lib/salesforce";
 
 export const runtime = "nodejs";
 
@@ -20,7 +21,7 @@ export default async function SettingsPage(props: { searchParams: Promise<{ sf_c
 
   const conns = await query<ConnRow>(
     `SELECT id, instance_url, org_name, is_sandbox, last_scanned_at, created_at
-     FROM salesforce_connections WHERE user_id = $1 ORDER BY created_at DESC`,
+     FROM salesforce_connections WHERE user_id = $1 AND disconnected_at IS NULL ORDER BY created_at DESC`,
     [user.id],
   );
 
@@ -40,7 +41,7 @@ export default async function SettingsPage(props: { searchParams: Promise<{ sf_c
         </div>
       </section>
 
-      <ConnectOrgPanel connections={conns} flash={sp} />
+      <ConnectOrgPanel connections={conns} flash={sp} oauthConfigured={isSalesforceOAuthConfigured()} />
     </>
   );
 }

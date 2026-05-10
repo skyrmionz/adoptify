@@ -2,12 +2,13 @@
 
 import { useState } from "react";
 import type { Step } from "@/content/types";
-import { Loader2, RefreshCw, AlertCircle, CheckCircle2, Link as LinkIcon } from "lucide-react";
+import { Loader2, RefreshCw, AlertCircle, CheckCircle2, Link as LinkIcon, ShieldCheck } from "lucide-react";
 import Link from "next/link";
 
 type ScanResponse = {
   scanned_at: string;
   is_mock: boolean;
+  is_cached?: boolean;
   score: number;
   snapshot: {
     foundations: { custom_objects: number; total_fields: number; relationships: number; record_counts: Record<string, number> };
@@ -17,6 +18,10 @@ type ScanResponse = {
     agents: { bots: number; topics: number; actions: number; prompt_templates: number };
     access: { permission_sets: number; ai_permission_sets: number; profiles: number };
     limits: { daily_api_used: number; daily_api_max: number };
+    scanMeta?: {
+      confidence: "high" | "medium" | "low";
+      probes: { area: string; label: string; status: "exact" | "partial" | "blocked"; detail: string }[];
+    };
   };
   findings: { id: string; area: string; severity: "ok" | "warn" | "danger"; title: string; explain: string }[];
 };
@@ -36,11 +41,15 @@ export function OrgScanReportStep({
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<ScanResponse | null>(null);
 
-  async function runScan() {
+  async function runScan(force = false) {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/salesforce/scan", { method: "POST" });
+      const res = await fetch("/api/salesforce/scan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ force }),
+      });
       const json = await res.json();
       if (!res.ok) throw new Error(json?.error ?? `HTTP ${res.status}`);
       setData(json);
@@ -60,7 +69,7 @@ export function OrgScanReportStep({
           {step.description && <p className="text-sm text-[var(--color-text-muted)] mt-2 max-w-2xl">{step.description}</p>}
         </div>
         <button
-          onClick={runScan}
+          onClick={() => runScan(!!data)}
           disabled={loading}
           className="h-10 px-4 rounded-md bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50 text-white text-sm font-semibold inline-flex items-center gap-2 whitespace-nowrap shrink-0"
         >
@@ -110,7 +119,10 @@ function ScanResults({ data }: { data: ScanResponse }) {
           <div className="text-xs uppercase tracking-[0.25em] text-[var(--color-text-muted)] mb-1">Agent readiness score</div>
           <div className="text-5xl font-semibold tracking-tight">{data.score}<span className="text-2xl text-[var(--color-text-muted)]">/100</span></div>
           <div className="text-xs text-[var(--color-text-subtle)] mt-2">
-            Scanned {new Date(data.scanned_at).toLocaleString()} {data.is_mock && "· Demo data (no org connected)"}
+            Scanned {new Date(data.scanned_at).toLocaleString()} {data.is_mock && "· Demo data (no org connected)"} {data.is_cached && "· Cached"}
+          </div>
+          <div className="text-xs text-[var(--color-text-subtle)] mt-1">
+            Headline counts focus on org-owned metadata where Salesforce exposes ownership signals.
           </div>
         </div>
         <ScoreRing score={data.score} />
@@ -118,14 +130,16 @@ function ScanResults({ data }: { data: ScanResponse }) {
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <Stat label="Custom objects" value={data.snapshot.foundations.custom_objects} />
-        <Stat label="Active flows" value={data.snapshot.automation.flows_active} />
-        <Stat label="Apex classes" value={data.snapshot.code.classes} />
+        <Stat label="Org active flows" value={data.snapshot.automation.flows_active} />
+        <Stat label="Org Apex classes" value={data.snapshot.code.classes} />
         <Stat label="Knowledge articles" value={data.snapshot.data.knowledge_articles} />
         <Stat label="Bots / Agents" value={data.snapshot.agents.bots} />
         <Stat label="Prompt templates" value={data.snapshot.agents.prompt_templates} />
         <Stat label="Apex code coverage" value={`${data.snapshot.code.coverage_pct}%`} />
         <Stat label="API used today" value={`${data.snapshot.limits.daily_api_used.toLocaleString()} / ${data.snapshot.limits.daily_api_max.toLocaleString()}`} />
       </div>
+
+      {data.snapshot.scanMeta && <ScanConfidence meta={data.snapshot.scanMeta} />}
 
       <div>
         <div className="text-xs uppercase tracking-[0.25em] text-[var(--color-text-muted)] mb-2">Findings</div>
@@ -143,6 +157,47 @@ function ScanResults({ data }: { data: ScanResponse }) {
             </div>
           ))}
         </div>
+      </div>
+    </div>
+  );
+}
+
+function ScanConfidence({ meta }: { meta: NonNullable<ScanResponse["snapshot"]["scanMeta"]> }) {
+  const blocked = meta.probes.filter((p) => p.status === "blocked").length;
+  const exact = meta.probes.filter((p) => p.status === "exact").length;
+  const tone = meta.confidence === "high"
+    ? "text-[var(--color-success)]"
+    : meta.confidence === "medium"
+      ? "text-[var(--color-warning)]"
+      : "text-[var(--color-danger)]";
+
+  return (
+    <div className="surface-card p-5">
+      <div className="flex items-start justify-between gap-4 mb-4">
+        <div>
+          <div className="text-xs uppercase tracking-[0.25em] text-[var(--color-text-muted)] mb-1">Scan confidence</div>
+          <div className={`text-lg font-semibold capitalize ${tone}`}>{meta.confidence}</div>
+          <p className="text-xs text-[var(--color-text-muted)] mt-1">
+            {exact} probes exact · {blocked} blocked or unavailable
+          </p>
+        </div>
+        <ShieldCheck size={20} className={tone} />
+      </div>
+      <div className="grid md:grid-cols-2 gap-2">
+        {meta.probes.map((probe) => (
+          <div key={`${probe.area}-${probe.label}`} className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] p-3">
+            <div className="flex items-center justify-between gap-3">
+              <div className="text-sm font-semibold">{probe.label}</div>
+              <span className={`text-[10px] uppercase tracking-[0.18em] ${
+                probe.status === "exact" ? "text-[var(--color-success)]" : probe.status === "partial" ? "text-[var(--color-warning)]" : "text-[var(--color-danger)]"
+              }`}>
+                {probe.status}
+              </span>
+            </div>
+            <div className="text-[10px] uppercase tracking-[0.18em] text-[var(--color-text-subtle)] mt-1">{probe.area}</div>
+            <p className="text-xs text-[var(--color-text-muted)] mt-2">{probe.detail}</p>
+          </div>
+        ))}
       </div>
     </div>
   );

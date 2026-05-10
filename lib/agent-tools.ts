@@ -4,8 +4,35 @@ import { getAllProgress, upsertProgress } from "./progress";
 import { query, queryOne } from "./db";
 import { API_VERSION, getLatestConnection, sfJson } from "./salesforce";
 import { runScan } from "./metadata-scanner";
+import { buildActivationPlan, getDiagnostic, getSelectedUseCase } from "./diagnostic";
 
 export const agentTools: ToolDef[] = [
+  // --- Read: Pocket FDE diagnostic ---
+  {
+    type: "function",
+    function: {
+      name: "read_diagnostic",
+      description: "Read the user's Pocket FDE diagnostic: intake answers, readiness summary, and Stage 1-2 blockers.",
+      parameters: { type: "object", properties: {}, additionalProperties: false },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "read_selected_use_case",
+      description: "Read the user's selected first Agentforce use case, including fit, prerequisites, blockers, and business impact.",
+      parameters: { type: "object", properties: {}, additionalProperties: false },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "read_activation_plan",
+      description: "Read the ordered activation plan derived from the diagnostic and selected first agent. Use this for next-step guidance.",
+      parameters: { type: "object", properties: {}, additionalProperties: false },
+    },
+  },
+
   // --- Read: Adoptify state ---
   {
     type: "function",
@@ -221,6 +248,27 @@ function isReadOnlySoql(soql: string): { ok: boolean; reason?: string } {
 export async function executeTool(name: string, rawArgs: unknown, ctx: ToolHandlerArgs): Promise<unknown> {
   const args = (rawArgs && typeof rawArgs === "object" ? rawArgs : {}) as Record<string, unknown>;
   switch (name) {
+    case "read_diagnostic": {
+      return await getDiagnostic(ctx.userId);
+    }
+    case "read_selected_use_case": {
+      return await getSelectedUseCase(ctx.userId);
+    }
+    case "read_activation_plan": {
+      const [diagnostic, selected] = await Promise.all([
+        getDiagnostic(ctx.userId),
+        getSelectedUseCase(ctx.userId),
+      ]);
+      return buildActivationPlan(selected, diagnostic).map((item) => ({
+        missionId: item.mission.id,
+        title: item.mission.title,
+        href: item.href,
+        section: item.sectionTitle,
+        reason: item.reason,
+        blockedBy: item.blockedBy,
+        dependencies: item.dependencies,
+      }));
+    }
     case "list_missions": {
       const progress = await getAllProgress(ctx.userId);
       const byId = new Map(progress.map((p) => [p.mission_id, p]));
