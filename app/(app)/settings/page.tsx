@@ -1,7 +1,6 @@
 import { getSessionUser } from "@/lib/auth";
 import { query } from "@/lib/db";
 import { ConnectOrgPanel } from "@/components/settings/ConnectOrgPanel";
-import { isSalesforceOAuthConfigured } from "@/lib/salesforce";
 
 export const runtime = "nodejs";
 
@@ -40,7 +39,7 @@ export default async function SettingsPage() {
         </div>
       </section>
 
-      <ConnectOrgPanel connections={conns} oauthConfigured={isSalesforceOAuthConfigured()} />
+      <ConnectOrgPanel connections={conns} />
     </>
   );
 }

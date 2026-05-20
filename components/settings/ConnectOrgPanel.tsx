@@ -30,10 +30,8 @@ type LoginState =
 
 export function ConnectOrgPanel({
   connections,
-  oauthConfigured,
 }: {
   connections: ConnRow[];
-  oauthConfigured: boolean;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -144,7 +142,7 @@ export function ConnectOrgPanel({
           <button
             type="button"
             onClick={() => startLogin(false)}
-            disabled={!oauthConfigured || login.kind !== "idle"}
+            disabled={login.kind !== "idle"}
             className="h-10 px-4 rounded-md bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-white text-sm font-semibold inline-flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
           >
             <Plus size={14} /> Connect production
@@ -152,28 +150,13 @@ export function ConnectOrgPanel({
           <button
             type="button"
             onClick={() => startLogin(true)}
-            disabled={!oauthConfigured || login.kind !== "idle"}
+            disabled={login.kind !== "idle"}
             className="h-10 px-4 rounded-md bg-[var(--color-surface-2)] border border-[var(--color-border)] hover:border-[var(--color-border-strong)] text-sm font-semibold inline-flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
           >
             <Plus size={14} /> Sandbox
           </button>
         </div>
       </div>
-
-      {!oauthConfigured && (
-        <div className="surface-card p-4 mb-3 border-[var(--color-warning)]/30">
-          <div className="flex items-start gap-2 text-sm">
-            <AlertCircle size={14} className="text-[var(--color-warning)] mt-0.5 shrink-0" />
-            <div>
-              <div className="font-semibold">Adoptify OAuth is not configured yet</div>
-              <p className="text-xs text-[var(--color-text-muted)] mt-1">
-                Set <code>SF_CLIENT_ID</code> in Heroku to the Connected App consumer key. The Connected App must have
-                Device Flow enabled and be configured as a public client (no secret required).
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
 
       {login.kind === "error" && (
         <div className="surface-card p-3 mb-3 border-[var(--color-danger)]/30">

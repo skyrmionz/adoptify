@@ -57,27 +57,20 @@ The app runs locally at `http://localhost:3000`.
 `OPENROUTER_MODEL`
 : Model id. The current default is `anthropic/claude-sonnet-4.6`.
 
-`SF_CLIENT_ID`
-: Salesforce Connected App Consumer Key. The Connected App must be configured as a public client (no secret) with Device Flow enabled.
+`SF_CLIENT_ID` (optional)
+: Override the OAuth client id. Defaults to `PlatformCLI` — the same public client id Salesforce CLI uses for `sf org login device` — so no Connected App is required.
 
-`SF_LOGIN_URL`
-: Optional local override. The device flow uses `login.salesforce.com` for production and `test.salesforce.com` for sandbox based on the button clicked.
+`SF_LOGIN_URL` (optional)
+: Local override for the OAuth host. Defaults to `login.salesforce.com` for production and `test.salesforce.com` for sandbox based on the button clicked.
 
-## Salesforce Connected App
+## Salesforce auth
 
-Use one Adoptify-owned Salesforce Connected App. End users should not create their own Connected App.
+Adoptify uses the OAuth 2.0 device flow with the public `PlatformCLI` client id — the same approach as `sf org login device`. There is no Connected App to create and no `client_secret`. Each user clicks Connect, sees a one-time user code, signs into their own Salesforce org at `login.salesforce.com`, and Adoptify stores the resulting tokens against their Adoptify account.
 
-Required settings:
+Caveats:
 
-- OAuth scopes: `api`, `refresh_token`, `openid`
-- Enable Device Flow: ON
-- Require Secret for Web Server Flow: OFF
-- Require Secret for Refresh Token Flow: OFF
-- IP Relaxation: `Relax IP restrictions`
-
-Do not request broad scopes such as `full`, `write`, `chatter_api`, or `custom_permissions`.
-
-Each Adoptify user signs in to their own Salesforce org by entering a one-time user code in their browser, just like `sf org login device`. Tokens are bound to the Adoptify user account.
+- The Salesforce login screen will show "Salesforce CLI" as the requesting application.
+- Some orgs restrict which Connected Apps can request OAuth (permitted apps allowlist, IP restrictions). Users in such orgs may not be able to connect via `PlatformCLI`. To support those users, set `SF_CLIENT_ID` to the consumer key of your own Connected App and configure it as a public client with Device Flow enabled.
 
 ## Heroku Deployment
 
@@ -95,7 +88,6 @@ heroku addons:create heroku-postgresql:essential-0 --app <your-heroku-app>
 heroku config:set APP_URL=https://<your-heroku-app>.herokuapp.com --app <your-heroku-app>
 heroku config:set AUTH_SECRET=<generated-secret> --app <your-heroku-app>
 heroku config:set OPENROUTER_API_KEY=<openrouter-key> --app <your-heroku-app>
-heroku config:set SF_CLIENT_ID=<salesforce-consumer-key> --app <your-heroku-app>
 git push heroku main
 ```
 
@@ -134,11 +126,8 @@ After deployment:
 
 ## Troubleshooting
 
-`Adoptify OAuth is not configured yet`
-: Set `SF_CLIENT_ID` in Heroku.
-
-`This Connected App does not have the device flow enabled`
-: Enable Device Flow in the Connected App settings and set Require Secret for Web Server Flow / Refresh Token Flow to OFF.
+`Salesforce rejected the device flow request`
+: The user's org likely blocks the `PlatformCLI` Connected App via a permitted apps allowlist or IP restriction. Either ask their admin to allow it, or set `SF_CLIENT_ID` to a custom Connected App with Device Flow enabled.
 
 Login code expired
 : Codes are valid for ~10 minutes. Click Connect again to request a new code.

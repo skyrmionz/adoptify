@@ -53,8 +53,13 @@ export function loginUrl(isSandbox = false, allowEnvOverride = true): string {
   return isSandbox ? "https://test.salesforce.com" : "https://login.salesforce.com";
 }
 
-export function isSalesforceOAuthConfigured(): boolean {
-  return !!process.env.SF_CLIENT_ID?.trim();
+// Use the same public client id the Salesforce CLI uses for `sf org login device`.
+// This means Adoptify needs no Connected App of its own and no env vars for Salesforce auth.
+// SF_CLIENT_ID can still be set to override (e.g. with a custom Connected App).
+const DEFAULT_CLIENT_ID = "PlatformCLI";
+
+function clientId(): string {
+  return process.env.SF_CLIENT_ID?.trim() || DEFAULT_CLIENT_ID;
 }
 
 function tokenEndpoint(baseUrl: string): string {
@@ -89,7 +94,7 @@ export async function requestDeviceCode(isSandbox: boolean): Promise<DeviceCodeR
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
       response_type: "device_code",
-      client_id: process.env.SF_CLIENT_ID ?? "",
+      client_id: clientId(),
       scope: "api refresh_token openid",
     }),
   });
@@ -97,8 +102,8 @@ export async function requestDeviceCode(isSandbox: boolean): Promise<DeviceCodeR
     const text = await res.text().catch(() => "");
     throw new SalesforceApiError(
       text.includes("unsupported_response_type")
-        ? "This Connected App does not have the device flow enabled. Enable 'Device Flow' in the Connected App settings."
-        : "Could not start Salesforce login. Check that SF_CLIENT_ID is set and the Connected App is configured as a public client.",
+        ? "Salesforce rejected the device flow request. The org may block this login method."
+        : "Could not start Salesforce login. Try again in a moment.",
     );
   }
   return await res.json();
@@ -125,7 +130,7 @@ export async function pollDeviceToken(deviceCode: string, isSandbox: boolean): P
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
       grant_type: "device",
-      client_id: process.env.SF_CLIENT_ID ?? "",
+      client_id: clientId(),
       code: deviceCode,
     }),
   });
@@ -155,7 +160,7 @@ export async function refreshAccessToken(baseUrl: string, refreshToken: string):
     body: new URLSearchParams({
       grant_type: "refresh_token",
       refresh_token: refreshToken,
-      client_id: process.env.SF_CLIENT_ID ?? "",
+      client_id: clientId(),
     }),
   });
   if (!res.ok) {
