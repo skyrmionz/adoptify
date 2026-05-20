@@ -53,14 +53,8 @@ export function loginUrl(isSandbox = false, allowEnvOverride = true): string {
   return isSandbox ? "https://test.salesforce.com" : "https://login.salesforce.com";
 }
 
-export function oauthCallbackUrl(): string {
-  if (process.env.SF_REDIRECT_URI) return process.env.SF_REDIRECT_URI;
-  const appUrl = process.env.APP_URL ?? "http://localhost:3000";
-  return `${appUrl.replace(/\/$/, "")}/api/oauth/callback`;
-}
-
 export function isSalesforceOAuthConfigured(): boolean {
-  return !!process.env.SF_CLIENT_ID?.trim() && !!process.env.SF_CLIENT_SECRET?.trim();
+  return !!process.env.SF_CLIENT_ID?.trim();
 }
 
 function tokenEndpoint(baseUrl: string): string {
@@ -82,41 +76,76 @@ function expiresAtFromNow(expiresIn?: number): string | null {
   return new Date(Date.now() + Math.max(0, expiresIn - 60) * 1000).toISOString();
 }
 
-export function authorizeUrl(args: { state: string; isSandbox?: boolean }): string {
-  const params = new URLSearchParams({
-    response_type: "code",
-    client_id: process.env.SF_CLIENT_ID ?? "",
-    redirect_uri: oauthCallbackUrl(),
-    scope: "api refresh_token openid",
-    prompt: "login",
-    state: args.state,
-  });
-  return `${loginUrl(args.isSandbox, false)}/services/oauth2/authorize?${params.toString()}`;
-}
+export type DeviceCodeResponse = {
+  device_code: string;
+  user_code: string;
+  verification_uri: string;
+  interval: number;
+};
 
-export async function exchangeCode(code: string, isSandbox: boolean): Promise<{
-  access_token: string;
-  refresh_token: string;
-  instance_url: string;
-  id: string; // identity URL containing org id + user id
-  issued_at?: string;
-  expires_in?: number;
-}> {
+export async function requestDeviceCode(isSandbox: boolean): Promise<DeviceCodeResponse> {
   const res = await fetch(tokenEndpoint(loginUrl(isSandbox, false)), {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
-      grant_type: "authorization_code",
-      code,
+      response_type: "device_code",
       client_id: process.env.SF_CLIENT_ID ?? "",
-      client_secret: process.env.SF_CLIENT_SECRET ?? "",
-      redirect_uri: oauthCallbackUrl(),
+      scope: "api refresh_token openid",
     }),
   });
   if (!res.ok) {
-    throw new SalesforceApiError("Salesforce authorization failed. Try connecting the org again.");
+    const text = await res.text().catch(() => "");
+    throw new SalesforceApiError(
+      text.includes("unsupported_response_type")
+        ? "This Connected App does not have the device flow enabled. Enable 'Device Flow' in the Connected App settings."
+        : "Could not start Salesforce login. Check that SF_CLIENT_ID is set and the Connected App is configured as a public client.",
+    );
   }
   return await res.json();
+}
+
+export type DevicePollOutcome =
+  | { status: "pending" }
+  | { status: "slow_down" }
+  | { status: "denied" }
+  | { status: "expired" }
+  | {
+      status: "success";
+      access_token: string;
+      refresh_token: string;
+      instance_url: string;
+      id: string;
+      issued_at?: string;
+      expires_in?: number;
+    };
+
+export async function pollDeviceToken(deviceCode: string, isSandbox: boolean): Promise<DevicePollOutcome> {
+  const res = await fetch(tokenEndpoint(loginUrl(isSandbox, false)), {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "device",
+      client_id: process.env.SF_CLIENT_ID ?? "",
+      code: deviceCode,
+    }),
+  });
+  if (res.ok) {
+    const json = await res.json();
+    return { status: "success", ...json };
+  }
+  const errJson = (await res.json().catch(() => null)) as { error?: string } | null;
+  switch (errJson?.error) {
+    case "authorization_pending":
+      return { status: "pending" };
+    case "slow_down":
+      return { status: "slow_down" };
+    case "access_denied":
+      return { status: "denied" };
+    case "expired_token":
+      return { status: "expired" };
+    default:
+      throw new SalesforceApiError("Salesforce login failed. Start over and try again.");
+  }
 }
 
 export async function refreshAccessToken(baseUrl: string, refreshToken: string): Promise<{ access_token: string; instance_url?: string; issued_at?: string; expires_in?: number }> {
@@ -127,7 +156,6 @@ export async function refreshAccessToken(baseUrl: string, refreshToken: string):
       grant_type: "refresh_token",
       refresh_token: refreshToken,
       client_id: process.env.SF_CLIENT_ID ?? "",
-      client_secret: process.env.SF_CLIENT_SECRET ?? "",
     }),
   });
   if (!res.ok) {

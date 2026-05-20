@@ -4,7 +4,7 @@ Adoptify is a diagnostic-led Pocket FDE for Salesforce Agentforce adoption. It h
 
 ## What It Does
 
-- Connects to Salesforce with OAuth Web Server Flow for production or sandbox orgs.
+- Connects to Salesforce with the OAuth 2.0 Device Flow (the same flow `sf org login device` uses) for production or sandbox orgs — no callback URL or client secret required.
 - Encrypts Salesforce access and refresh tokens at rest.
 - Runs a best-effort read-only org scan for objects, flows, Apex, Knowledge, Agentforce/bot metadata, permissions, Data Cloud signals, channels, and API limits.
 - Shows scan confidence so users can see which probes were exact and which were blocked or unavailable.
@@ -58,16 +58,10 @@ The app runs locally at `http://localhost:3000`.
 : Model id. The current default is `anthropic/claude-sonnet-4.6`.
 
 `SF_CLIENT_ID`
-: Salesforce Connected App Consumer Key.
-
-`SF_CLIENT_SECRET`
-: Salesforce Connected App Consumer Secret.
-
-`SF_REDIRECT_URI`
-: OAuth callback URL. Must exactly match the Salesforce Connected App callback, for example `https://<your-heroku-app>.herokuapp.com/api/oauth/callback`.
+: Salesforce Connected App Consumer Key. The Connected App must be configured as a public client (no secret) with Device Flow enabled.
 
 `SF_LOGIN_URL`
-: Optional local override. OAuth start routes use `login.salesforce.com` for production and `test.salesforce.com` for sandbox based on the button clicked.
+: Optional local override. The device flow uses `login.salesforce.com` for production and `test.salesforce.com` for sandbox based on the button clicked.
 
 ## Salesforce Connected App
 
@@ -75,13 +69,15 @@ Use one Adoptify-owned Salesforce Connected App. End users should not create the
 
 Required settings:
 
-- Callback URL: `https://<your-heroku-app>.herokuapp.com/api/oauth/callback`
 - OAuth scopes: `api`, `refresh_token`, `openid`
+- Enable Device Flow: ON
+- Require Secret for Web Server Flow: OFF
+- Require Secret for Refresh Token Flow: OFF
 - IP Relaxation: `Relax IP restrictions`
 
 Do not request broad scopes such as `full`, `write`, `chatter_api`, or `custom_permissions`.
 
-Users still need to approve OAuth for their Salesforce org. The app requests `prompt=login` so they can choose a different org instead of silently reusing a prior Salesforce browser session.
+Each Adoptify user signs in to their own Salesforce org by entering a one-time user code in their browser, just like `sf org login device`. Tokens are bound to the Adoptify user account.
 
 ## Heroku Deployment
 
@@ -97,11 +93,9 @@ Typical Heroku setup:
 heroku create <your-heroku-app>
 heroku addons:create heroku-postgresql:essential-0 --app <your-heroku-app>
 heroku config:set APP_URL=https://<your-heroku-app>.herokuapp.com --app <your-heroku-app>
-heroku config:set SF_REDIRECT_URI=https://<your-heroku-app>.herokuapp.com/api/oauth/callback --app <your-heroku-app>
 heroku config:set AUTH_SECRET=<generated-secret> --app <your-heroku-app>
 heroku config:set OPENROUTER_API_KEY=<openrouter-key> --app <your-heroku-app>
 heroku config:set SF_CLIENT_ID=<salesforce-consumer-key> --app <your-heroku-app>
-heroku config:set SF_CLIENT_SECRET=<salesforce-consumer-secret> --app <your-heroku-app>
 git push heroku main
 ```
 
@@ -141,13 +135,13 @@ After deployment:
 ## Troubleshooting
 
 `Adoptify OAuth is not configured yet`
-: Set `SF_CLIENT_ID` and `SF_CLIENT_SECRET` in Heroku.
+: Set `SF_CLIENT_ID` in Heroku.
 
-`redirect_uri_mismatch`
-: Ensure `SF_REDIRECT_URI` exactly matches the Salesforce Connected App callback URL. Include `/api/oauth/callback` and use the deployed app host.
+`This Connected App does not have the device flow enabled`
+: Enable Device Flow in the Connected App settings and set Require Secret for Web Server Flow / Refresh Token Flow to OFF.
 
-Salesforce reconnects the same org
-: The app now sends `prompt=login`. If Salesforce still reuses a browser session, try an incognito window.
+Login code expired
+: Codes are valid for ~10 minutes. Click Connect again to request a new code.
 
 Org scan looks incomplete
 : Check the Scan confidence panel. Blocked probes usually mean the connected Salesforce user lacks access to that metadata object.

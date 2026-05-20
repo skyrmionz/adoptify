@@ -14,8 +14,7 @@ type ConnRow = {
   created_at: string;
 };
 
-export default async function SettingsPage(props: { searchParams: Promise<{ sf_connected?: string; sf_error?: string }> }) {
-  const sp = await props.searchParams;
+export default async function SettingsPage() {
   const user = await getSessionUser();
   if (!user) return null;
 
@@ -41,7 +40,7 @@ export default async function SettingsPage(props: { searchParams: Promise<{ sf_c
         </div>
       </section>
 
-      <ConnectOrgPanel connections={conns} flash={sp} oauthConfigured={isSalesforceOAuthConfigured()} />
+      <ConnectOrgPanel connections={conns} oauthConfigured={isSalesforceOAuthConfigured()} />
     </>
   );
 }
