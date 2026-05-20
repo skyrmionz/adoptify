@@ -73,6 +73,22 @@ export type Snapshot = {
     hour_dow_heatmap: number[][]; // [dayOfWeek 0..6][hour 0..23] = count
     actions_30d: { name: string; calls: number; success: number; errors: number }[];
   };
+  provisioning: {
+    package_licenses: { id: string; name: string | null }[];
+    bot_definitions: { id: string; developerName: string | null; status: string | null }[];
+    custom_permission_sets: { id: string; name: string | null }[];
+    object_count: number;
+    data_cloud_owned_entity_found: boolean;
+  };
+  scanMeta: {
+    confidence: "high" | "medium" | "low";
+    probes: {
+      area: string;
+      label: string;
+      status: "exact" | "partial" | "blocked";
+      detail: string;
+    }[];
+  };
 };
 
 export type ChapterScore = {
@@ -152,6 +168,19 @@ export function buildMockScan(): ScanResult {
       forecast_month_end: 4200,
     },
     runtime: buildMockRuntime(),
+    provisioning: {
+      package_licenses: [],
+      bot_definitions: [],
+      custom_permission_sets: [],
+      object_count: 42,
+      data_cloud_owned_entity_found: false,
+    },
+    scanMeta: {
+      confidence: "medium",
+      probes: [
+        { area: "Demo", label: "Demo scan", status: "partial", detail: "Using sample data because no org is connected." },
+      ],
+    },
   };
   return scoreSnapshot(snapshot, true);
 }
@@ -238,7 +267,7 @@ function buildMockRuntime(): Snapshot["runtime"] {
 // --- Real scan --------------------------------------------------
 
 export async function runScan(creds: SfCredentials): Promise<ScanResult> {
-  const [foundations, automation, code, data, agents, access, limits, agentforceSetup, channels, integrations, dataDepth, runtime] = await Promise.all([
+  const [foundations, automation, code, data, agents, access, limits, agentforceSetup, channels, integrations, dataDepth, runtime, provisioning, scanMeta] = await Promise.all([
     scanFoundations(creds),
     scanAutomation(creds),
     scanCode(creds),
@@ -251,6 +280,8 @@ export async function runScan(creds: SfCredentials): Promise<ScanResult> {
     scanIntegrations(creds),
     scanDataDepth(creds),
     scanRuntime(creds),
+    scanProvisioning(creds),
+    scanHealth(creds),
   ]);
   const apiPct = limits.daily_api_max > 0 ? Math.round((limits.daily_api_used / limits.daily_api_max) * 100) : 0;
   const consumption: Snapshot["consumption"] = {
@@ -261,7 +292,7 @@ export async function runScan(creds: SfCredentials): Promise<ScanResult> {
     })),
     forecast_month_end: forecastMonthEnd(runtime.daily_by_channel),
   };
-  const snapshot: Snapshot = { foundations, automation, code, data, agents, access, limits, agentforceSetup, channels, integrations, dataDepth, consumption, runtime };
+  const snapshot: Snapshot = { foundations, automation, code, data, agents, access, limits, agentforceSetup, channels, integrations, dataDepth, consumption, runtime, provisioning, scanMeta };
   return scoreSnapshot(snapshot, false);
 }
 
@@ -467,35 +498,154 @@ async function rest<T>(creds: SfCredentials, soql: string): Promise<ToolingQuery
   return await sfJson<ToolingQueryResult<T>>(creds, `/services/data/${API_VERSION}/query?q=${encodeURIComponent(soql)}`);
 }
 
+async function restCount(creds: SfCredentials, soql: string): Promise<number> {
+  const r = await rest<{ expr0?: number; count?: number; total?: number }>(creds, soql);
+  const first = r.records?.[0];
+  if (!first) return 0;
+  return first.expr0 ?? first.count ?? first.total ?? 0;
+}
+
+async function probeAccess(args: {
+  area: string;
+  label: string;
+  run: () => Promise<unknown>;
+  exactDetail: string;
+  blockedDetail: string;
+}): Promise<Snapshot["scanMeta"]["probes"][number]> {
+  try {
+    await args.run();
+    return { area: args.area, label: args.label, status: "exact", detail: args.exactDetail };
+  } catch {
+    return { area: args.area, label: args.label, status: "blocked", detail: args.blockedDetail };
+  }
+}
+
+async function scanHealth(creds: SfCredentials): Promise<Snapshot["scanMeta"]> {
+  const probes = await Promise.all([
+    probeAccess({
+      area: "Foundations",
+      label: "Objects and fields",
+      run: () => restCount(creds, "SELECT COUNT() FROM EntityDefinition WHERE QualifiedApiName LIKE '%__c'"),
+      exactDetail: "Custom object counts use EntityDefinition.",
+      blockedDetail: "Object ownership probe was blocked; object counts may fall back or undercount.",
+    }),
+    probeAccess({
+      area: "Automation",
+      label: "Flows",
+      run: () => tooling(creds, "SELECT Id FROM Flow LIMIT 1"),
+      exactDetail: "Flow metadata is readable.",
+      blockedDetail: "Flow metadata was blocked; automation counts may be incomplete.",
+    }),
+    probeAccess({
+      area: "Code",
+      label: "Apex",
+      run: () => tooling(creds, "SELECT Id FROM ApexClass LIMIT 1"),
+      exactDetail: "Apex metadata is readable.",
+      blockedDetail: "Apex metadata was blocked; action candidate counts may be incomplete.",
+    }),
+    probeAccess({
+      area: "Knowledge",
+      label: "Knowledge",
+      run: () => restCount(creds, "SELECT COUNT(Id) FROM Knowledge__kav WHERE PublishStatus = 'Online'"),
+      exactDetail: "Published Knowledge article counts are readable.",
+      blockedDetail: "Knowledge article counts were blocked or Knowledge is unavailable.",
+    }),
+    probeAccess({
+      area: "Agentforce",
+      label: "Bots / agents",
+      run: () => tooling(creds, "SELECT Id FROM BotDefinition LIMIT 1"),
+      exactDetail: "BotDefinition metadata is readable.",
+      blockedDetail: "Bot/Agent metadata was blocked or unavailable in this org.",
+    }),
+    probeAccess({
+      area: "Access",
+      label: "Permission sets",
+      run: () => restCount(creds, "SELECT COUNT(Id) FROM PermissionSet"),
+      exactDetail: "Permission set counts are readable.",
+      blockedDetail: "Permission set counts were blocked; access recommendations may be less precise.",
+    }),
+    probeAccess({
+      area: "Data Cloud",
+      label: "Data Cloud provisioning",
+      run: () => rest(creds, "SELECT Id, Status FROM DatacloudOwnedEntity LIMIT 1"),
+      exactDetail: "Data Cloud provisioning signal is readable.",
+      blockedDetail: "Data Cloud provisioning signal was blocked or unavailable.",
+    }),
+  ]);
+
+  const blocked = probes.filter((p) => p.status === "blocked").length;
+  const confidence = blocked === 0 ? "high" : blocked <= 2 ? "medium" : "low";
+  return { confidence, probes };
+}
+
 async function scanFoundations(creds: SfCredentials): Promise<Snapshot["foundations"]> {
-  const objects = await tooling<{ Id: string; DeveloperName: string }>(creds, "SELECT Id, DeveloperName FROM CustomObject");
-  const fields = await tooling<{ Id: string }>(creds, "SELECT Id FROM CustomField");
-  const relationships = await tooling<{ Id: string }>(
-    creds,
-    "SELECT Id FROM CustomField WHERE DataType = 'Lookup' OR DataType = 'MasterDetail'",
-  );
+  let customObjects = 0;
+  let totalFields = 0;
+  let relationships = 0;
+
+  try {
+    customObjects = await restCount(
+      creds,
+      "SELECT COUNT() FROM EntityDefinition WHERE QualifiedApiName LIKE '%__c' AND IsCustomSetting = false AND IsDeprecatedAndHidden = false",
+    );
+  } catch {
+    try {
+      const objects = await tooling<{ Id: string; DeveloperName: string; NamespacePrefix?: string | null }>(
+        creds,
+        "SELECT Id, DeveloperName, NamespacePrefix FROM CustomObject",
+      );
+      customObjects = objects.records.filter((o) => !o.NamespacePrefix).length;
+    } catch { /* best-effort */ }
+  }
+
+  try {
+    const fields = await tooling<{ Id: string; NamespacePrefix?: string | null }>(
+      creds,
+      "SELECT Id, NamespacePrefix FROM CustomField",
+    );
+    totalFields = fields.records.filter((f) => !f.NamespacePrefix).length;
+  } catch {
+    try {
+      const fields = await tooling<{ Id: string }>(creds, "SELECT Id FROM CustomField");
+      totalFields = fields.totalSize ?? 0;
+    } catch { /* best-effort */ }
+  }
+
+  try {
+    const relationshipRows = await tooling<{ Id: string; NamespacePrefix?: string | null }>(
+      creds,
+      "SELECT Id, NamespacePrefix FROM CustomField WHERE DataType = 'Lookup' OR DataType = 'MasterDetail'",
+    );
+    relationships = relationshipRows.records.filter((r) => !r.NamespacePrefix).length;
+  } catch { /* best-effort */ }
 
   const counts: Record<string, number> = {};
   for (const obj of ["Account", "Contact", "Case", "Opportunity"]) {
     try {
-      const r = await rest<{ totalSize: number }>(creds, `SELECT COUNT(Id) FROM ${obj}`);
-      counts[obj] = r.totalSize ?? 0;
+      counts[obj] = await restCount(creds, `SELECT COUNT(Id) FROM ${obj}`);
     } catch {
       counts[obj] = 0;
     }
   }
 
   return {
-    custom_objects: objects.totalSize,
-    total_fields: fields.totalSize,
-    relationships: relationships.totalSize,
+    custom_objects: customObjects,
+    total_fields: totalFields,
+    relationships,
     record_counts: counts,
   };
 }
 
 async function scanAutomation(creds: SfCredentials): Promise<Snapshot["automation"]> {
-  type FlowRow = { Id: string; ProcessType: string; Status: string };
-  const r = await tooling<FlowRow>(creds, "SELECT Id, ProcessType, Status FROM Flow");
+  type FlowRow = { Id: string; ProcessType: string; Status: string; NamespacePrefix?: string | null };
+  let r: ToolingQueryResult<FlowRow> = { totalSize: 0, done: true, records: [] };
+  try {
+    r = await tooling<FlowRow>(creds, "SELECT Id, ProcessType, Status, NamespacePrefix FROM Flow WHERE NamespacePrefix = null");
+  } catch {
+    try {
+      r = await tooling<FlowRow>(creds, "SELECT Id, ProcessType, Status FROM Flow");
+    } catch { /* best-effort */ }
+  }
   let active = 0;
   let inactive = 0;
   const types: Record<string, number> = {};
@@ -508,9 +658,19 @@ async function scanAutomation(creds: SfCredentials): Promise<Snapshot["automatio
 }
 
 async function scanCode(creds: SfCredentials): Promise<Snapshot["code"]> {
-  type ClassRow = { Id: string; LengthWithoutComments: number; Body: string | null };
-  const cls = await tooling<ClassRow>(creds, "SELECT Id, LengthWithoutComments FROM ApexClass");
-  const loc = cls.records.reduce((acc, c) => acc + (c.LengthWithoutComments ?? 0), 0);
+  type ClassRow = { Id: string; LengthWithoutComments: number; Body: string | null; NamespacePrefix?: string | null };
+  let cls: ToolingQueryResult<ClassRow> = { totalSize: 0, done: true, records: [] };
+  try {
+    cls = await tooling<ClassRow>(creds, "SELECT Id, LengthWithoutComments, NamespacePrefix FROM ApexClass WHERE NamespacePrefix = null");
+  } catch {
+    try {
+      cls = await tooling<ClassRow>(creds, "SELECT Id, LengthWithoutComments, NamespacePrefix FROM ApexClass");
+      cls.records = cls.records.filter((c) => !c.NamespacePrefix);
+      cls.totalSize = cls.records.length;
+    } catch { /* best-effort */ }
+  }
+  const orgClasses = cls.records.filter((c) => !c.NamespacePrefix);
+  const loc = orgClasses.reduce((acc, c) => acc + (c.LengthWithoutComments ?? 0), 0);
 
   let coverage = 0;
   try {
@@ -532,26 +692,25 @@ async function scanCode(creds: SfCredentials): Promise<Snapshot["code"]> {
   try {
     const inv = await tooling<{ Id: string }>(
       creds,
-      "SELECT Id FROM ApexClass WHERE SymbolTable.methods.annotations.name = 'InvocableMethod'",
+      "SELECT Id FROM ApexClass WHERE NamespacePrefix = null AND SymbolTable.methods.annotations.name = 'InvocableMethod'",
     );
     invocable = inv.totalSize ?? 0;
   } catch { /* ok */ }
   try {
     const aura = await tooling<{ Id: string }>(
       creds,
-      "SELECT Id FROM ApexClass WHERE SymbolTable.methods.annotations.name = 'AuraEnabled'",
+      "SELECT Id FROM ApexClass WHERE NamespacePrefix = null AND SymbolTable.methods.annotations.name = 'AuraEnabled'",
     );
     auraEnabled = aura.totalSize ?? 0;
   } catch { /* ok */ }
 
-  return { classes: cls.totalSize, loc, coverage_pct: coverage, invocable, aura_enabled: auraEnabled };
+  return { classes: orgClasses.length, loc, coverage_pct: coverage, invocable, aura_enabled: auraEnabled };
 }
 
 async function scanData(creds: SfCredentials): Promise<Snapshot["data"]> {
   let kArticles = 0;
   try {
-    const k = await rest<{ totalSize: number }>(creds, "SELECT COUNT(Id) FROM Knowledge__kav WHERE PublishStatus = 'Online'");
-    kArticles = k.totalSize ?? 0;
+    kArticles = await restCount(creds, "SELECT COUNT(Id) FROM Knowledge__kav WHERE PublishStatus = 'Online'");
   } catch {
     kArticles = 0;
   }
@@ -581,14 +740,14 @@ async function scanAccess(creds: SfCredentials): Promise<Snapshot["access"]> {
   let permsets = 0;
   let aiPermsets = 0;
   let profiles = 0;
-  try { permsets = (await rest<{ totalSize: number }>(creds, "SELECT COUNT(Id) FROM PermissionSet")).totalSize ?? 0; } catch { /* ok */ }
+  try { permsets = await restCount(creds, "SELECT COUNT(Id) FROM PermissionSet"); } catch { /* ok */ }
   try {
-    aiPermsets = (await rest<{ totalSize: number }>(
+    aiPermsets = await restCount(
       creds,
       "SELECT COUNT(Id) FROM PermissionSet WHERE Label LIKE '%Einstein%' OR Label LIKE '%Agent%'",
-    )).totalSize ?? 0;
+    );
   } catch { /* ok */ }
-  try { profiles = (await rest<{ totalSize: number }>(creds, "SELECT COUNT(Id) FROM Profile")).totalSize ?? 0; } catch { /* ok */ }
+  try { profiles = await restCount(creds, "SELECT COUNT(Id) FROM Profile"); } catch { /* ok */ }
   return { permission_sets: permsets, ai_permission_sets: aiPermsets, profiles };
 }
 
@@ -667,10 +826,10 @@ async function scanChannels(creds: SfCredentials): Promise<Snapshot["channels"]>
     )).totalSize ?? 0;
   } catch { /* ok */ }
   try {
-    conversations30d = (await rest<{ totalSize: number }>(
+    conversations30d = await restCount(
       creds,
       "SELECT COUNT(Id) FROM MessagingSession WHERE CreatedDate = LAST_N_DAYS:30",
-    )).totalSize ?? 0;
+    );
   } catch { /* ok */ }
 
   return {
@@ -752,10 +911,10 @@ async function scanDataDepth(creds: SfCredentials): Promise<Snapshot["dataDepth"
   let searchIndex: boolean | undefined = undefined;
 
   try {
-    dataCategories = (await rest<{ totalSize: number }>(
+    dataCategories = await restCount(
       creds,
       "SELECT COUNT(Id) FROM DataCategory",
-    )).totalSize ?? 0;
+    );
   } catch { /* ok */ }
   try {
     dataStreams = (await tooling<{ Id: string }>(creds, "SELECT Id FROM MktDataStream")).totalSize ?? 0;
@@ -775,6 +934,59 @@ async function scanDataDepth(creds: SfCredentials): Promise<Snapshot["dataDepth"
     data_lake_objects: dataLakeObjects,
     identity_resolution_rulesets: identityRules,
     search_index_enabled: searchIndex,
+  };
+}
+
+async function scanProvisioning(creds: SfCredentials): Promise<Snapshot["provisioning"]> {
+  const packageLicenses: Snapshot["provisioning"]["package_licenses"] = [];
+  const botDefinitions: Snapshot["provisioning"]["bot_definitions"] = [];
+  const customPermissionSets: Snapshot["provisioning"]["custom_permission_sets"] = [];
+  let objectCount = 0;
+  let dataCloudOwnedEntityFound = false;
+
+  try {
+    const r = await rest<{ Id: string; Name?: string }>(creds, "SELECT Id, Name FROM PackageLicense");
+    for (const row of r.records.slice(0, 50)) {
+      packageLicenses.push({ id: row.Id, name: row.Name ?? null });
+    }
+  } catch { /* best-effort */ }
+
+  try {
+    const r = await tooling<{ Id: string; DeveloperName?: string; Status?: string }>(
+      creds,
+      "SELECT Id, DeveloperName, Status FROM BotDefinition",
+    );
+    for (const row of r.records.slice(0, 50)) {
+      botDefinitions.push({ id: row.Id, developerName: row.DeveloperName ?? null, status: row.Status ?? null });
+    }
+  } catch { /* best-effort */ }
+
+  try {
+    const r = await rest<{ Id: string; Name?: string }>(
+      creds,
+      "SELECT Id, Name FROM PermissionSet WHERE IsOwnedByProfile = false",
+    );
+    for (const row of r.records.slice(0, 100)) {
+      customPermissionSets.push({ id: row.Id, name: row.Name ?? null });
+    }
+  } catch { /* best-effort */ }
+
+  try {
+    const r = await sfJson<{ sobjects?: unknown[] }>(creds, `/services/data/${API_VERSION}/sobjects/`);
+    objectCount = r.sobjects?.length ?? 0;
+  } catch { /* best-effort */ }
+
+  try {
+    const r = await rest<{ Id: string; Status?: string }>(creds, "SELECT Id, Status FROM DatacloudOwnedEntity LIMIT 1");
+    dataCloudOwnedEntityFound = (r.totalSize ?? r.records.length) > 0;
+  } catch { /* best-effort */ }
+
+  return {
+    package_licenses: packageLicenses,
+    bot_definitions: botDefinitions,
+    custom_permission_sets: customPermissionSets,
+    object_count: objectCount,
+    data_cloud_owned_entity_found: dataCloudOwnedEntityFound,
   };
 }
 

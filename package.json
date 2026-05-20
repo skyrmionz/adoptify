@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start",
+    "start": "node .next/standalone/server.js",
     "lint": "eslint",
     "heroku-postbuild": "npm run build && cp -r public .next/standalone/public && cp -r .next/static .next/standalone/.next/static"
   },

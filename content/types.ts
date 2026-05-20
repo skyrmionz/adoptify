@@ -86,6 +86,10 @@ export type Mission = {
   title: string;
   summary: string;       // 1-line description shown on mission card
   estMinutes: number;    // estimated time
+  stage?: "provisioned" | "agents_created" | "activated";
+  dependencies?: string[];
+  blockedBy?: string[];
+  useCaseTags?: string[];
   steps: Step[];
   verify: VerifyRule;
 };

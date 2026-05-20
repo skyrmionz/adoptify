@@ -13,7 +13,15 @@ type ConnRow = {
   created_at: string;
 };
 
-export function ConnectOrgPanel({ connections, flash }: { connections: ConnRow[]; flash: { sf_connected?: string; sf_error?: string } }) {
+export function ConnectOrgPanel({
+  connections,
+  flash,
+  oauthConfigured,
+}: {
+  connections: ConnRow[];
+  flash: { sf_connected?: string; sf_error?: string };
+  oauthConfigured: boolean;
+}) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
 
@@ -28,28 +36,67 @@ export function ConnectOrgPanel({ connections, flash }: { connections: ConnRow[]
     });
   }
 
+  const flashError = flash.sf_error === "oauth_not_configured"
+    ? "Adoptify OAuth is not configured yet. Add the shared Salesforce Connected App keys in Heroku before connecting an org."
+    : flash.sf_error;
+
   return (
     <section>
       <div className="flex items-center justify-between mb-3">
         <div>
           <div className="text-xs uppercase tracking-[0.25em] text-[var(--color-text-muted)]">Connected orgs</div>
-          <p className="text-sm text-[var(--color-text-muted)] mt-1">Adoptify reads metadata only. Tokens are encrypted at rest.</p>
+          <p className="text-sm text-[var(--color-text-muted)] mt-1">Adoptify reads metadata only. Choose the Salesforce org during connection.</p>
         </div>
         <div className="flex gap-2">
-          <a
-            href="/api/salesforce/start"
-            className="h-10 px-4 rounded-md bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-white text-sm font-semibold inline-flex items-center gap-2"
-          >
-            <Plus size={14} /> Connect production
-          </a>
-          <a
-            href="/api/salesforce/start?sandbox=1"
-            className="h-10 px-4 rounded-md bg-[var(--color-surface-2)] border border-[var(--color-border)] hover:border-[var(--color-border-strong)] text-sm font-semibold inline-flex items-center gap-2"
-          >
-            <Plus size={14} /> Sandbox
-          </a>
+          {oauthConfigured ? (
+            <>
+              <a
+                href="/api/salesforce/start"
+                className="h-10 px-4 rounded-md bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-white text-sm font-semibold inline-flex items-center gap-2"
+              >
+                <Plus size={14} /> Connect production
+              </a>
+              <a
+                href="/api/salesforce/start?sandbox=1"
+                className="h-10 px-4 rounded-md bg-[var(--color-surface-2)] border border-[var(--color-border)] hover:border-[var(--color-border-strong)] text-sm font-semibold inline-flex items-center gap-2"
+              >
+                <Plus size={14} /> Sandbox
+              </a>
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                disabled
+                className="h-10 px-4 rounded-md bg-[var(--color-accent)] opacity-40 text-white text-sm font-semibold inline-flex items-center gap-2 cursor-not-allowed"
+              >
+                <Plus size={14} /> Connect production
+              </button>
+              <button
+                type="button"
+                disabled
+                className="h-10 px-4 rounded-md bg-[var(--color-surface-2)] border border-[var(--color-border)] opacity-40 text-sm font-semibold inline-flex items-center gap-2 cursor-not-allowed"
+              >
+                <Plus size={14} /> Sandbox
+              </button>
+            </>
+          )}
         </div>
       </div>
+
+      {!oauthConfigured && (
+        <div className="surface-card p-4 mb-3 border-[var(--color-warning)]/30">
+          <div className="flex items-start gap-2 text-sm">
+            <AlertCircle size={14} className="text-[var(--color-warning)] mt-0.5 shrink-0" />
+            <div>
+              <div className="font-semibold">Adoptify OAuth is not configured yet</div>
+              <p className="text-xs text-[var(--color-text-muted)] mt-1">
+                Add the shared Adoptify Salesforce Connected App consumer key and secret in Heroku. Customers will not need to create their own Connected App.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {flash.sf_connected && (
         <div className="surface-card p-3 mb-3 border-[var(--color-success)]/30">
@@ -58,10 +105,10 @@ export function ConnectOrgPanel({ connections, flash }: { connections: ConnRow[]
           </div>
         </div>
       )}
-      {flash.sf_error && (
+      {flashError && (
         <div className="surface-card p-3 mb-3 border-[var(--color-danger)]/30">
           <div className="flex items-center gap-2 text-sm">
-            <AlertCircle size={14} className="text-[var(--color-danger)]" /> {flash.sf_error}
+            <AlertCircle size={14} className="text-[var(--color-danger)]" /> {flashError}
           </div>
         </div>
       )}

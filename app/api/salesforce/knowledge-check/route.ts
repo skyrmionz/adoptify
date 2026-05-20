@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth";
-import { API_VERSION, getLatestConnection, sfJson } from "@/lib/salesforce";
+import { API_VERSION, getLatestConnection, safeSalesforceError, sfJson } from "@/lib/salesforce";
 
 export const runtime = "nodejs";
 
@@ -31,6 +31,6 @@ export async function POST(req: Request) {
     }
     return NextResponse.json({ error: "unknown kind" }, { status: 400 });
   } catch (err) {
-    return NextResponse.json({ error: err instanceof Error ? err.message : "check_failed" }, { status: 500 });
+    return NextResponse.json({ error: safeSalesforceError(err) }, { status: 500 });
   }
 }

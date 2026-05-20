@@ -9,6 +9,9 @@ export type SfConnectionRow = {
   org_name: string | null;
   access_token_enc: Buffer;
   refresh_token_enc: Buffer | null;
+  access_token_issued_at: string | null;
+  access_token_expires_at: string | null;
+  disconnected_at: string | null;
   is_sandbox: boolean;
   last_scanned_at: string | null;
 };
@@ -18,34 +21,88 @@ export type SfCredentials = {
   instanceUrl: string;
   accessToken: string;
   refreshToken: string | null;
+  accessTokenIssuedAt: string | null;
+  accessTokenExpiresAt: string | null;
   isSandbox: boolean;
   orgId: string;
   orgName: string | null;
 };
 
-export function loginUrl(isSandbox = false): string {
-  if (process.env.SF_LOGIN_URL) return process.env.SF_LOGIN_URL;
+export class SalesforceConnectionExpiredError extends Error {
+  constructor() {
+    super("Your org connection has expired — reconnect to continue.");
+    this.name = "SalesforceConnectionExpiredError";
+  }
+}
+
+export class SalesforceApiError extends Error {
+  constructor(message = "Salesforce request failed. Check your org connection and try again.") {
+    super(message);
+    this.name = "SalesforceApiError";
+  }
+}
+
+export function safeSalesforceError(err: unknown): string {
+  if (err instanceof SalesforceConnectionExpiredError) return err.message;
+  if (err instanceof SalesforceApiError) return err.message;
+  return "Salesforce request failed. Check your org connection and try again.";
+}
+
+export function loginUrl(isSandbox = false, allowEnvOverride = true): string {
+  if (allowEnvOverride && process.env.SF_LOGIN_URL) return process.env.SF_LOGIN_URL;
   return isSandbox ? "https://test.salesforce.com" : "https://login.salesforce.com";
+}
+
+export function oauthCallbackUrl(): string {
+  if (process.env.SF_REDIRECT_URI) return process.env.SF_REDIRECT_URI;
+  const appUrl = process.env.APP_URL ?? "http://localhost:3000";
+  return `${appUrl.replace(/\/$/, "")}/api/oauth/callback`;
+}
+
+export function isSalesforceOAuthConfigured(): boolean {
+  return !!process.env.SF_CLIENT_ID?.trim() && !!process.env.SF_CLIENT_SECRET?.trim();
+}
+
+function tokenEndpoint(baseUrl: string): string {
+  return `${baseUrl.replace(/\/$/, "")}/services/oauth2/token`;
+}
+
+function revokeEndpoint(baseUrl: string): string {
+  return `${baseUrl.replace(/\/$/, "")}/services/oauth2/revoke`;
+}
+
+function issuedAtToIso(issuedAt?: string): string | null {
+  if (!issuedAt) return null;
+  const n = Number(issuedAt);
+  return Number.isFinite(n) ? new Date(n).toISOString() : null;
+}
+
+function expiresAtFromNow(expiresIn?: number): string | null {
+  if (!expiresIn || !Number.isFinite(expiresIn)) return null;
+  return new Date(Date.now() + Math.max(0, expiresIn - 60) * 1000).toISOString();
 }
 
 export function authorizeUrl(args: { state: string; isSandbox?: boolean }): string {
   const params = new URLSearchParams({
     response_type: "code",
     client_id: process.env.SF_CLIENT_ID ?? "",
-    redirect_uri: process.env.SF_REDIRECT_URI ?? "",
-    scope: "api refresh_token offline_access",
+    redirect_uri: oauthCallbackUrl(),
+    scope: "api refresh_token openid",
+    prompt: "login",
     state: args.state,
   });
-  return `${loginUrl(args.isSandbox)}/services/oauth2/authorize?${params.toString()}`;
+  return `${loginUrl(args.isSandbox, false)}/services/oauth2/authorize?${params.toString()}`;
 }
 
-export async function exchangeCode(code: string): Promise<{
+export async function exchangeCode(code: string, isSandbox: boolean): Promise<{
   access_token: string;
   refresh_token: string;
   instance_url: string;
   id: string; // identity URL containing org id + user id
+  issued_at?: string;
+  expires_in?: number;
 }> {
-  const res = await fetch(`${loginUrl()}/services/oauth2/token`, {
+  const res = await fetch(tokenEndpoint(loginUrl(isSandbox, false)), {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
@@ -53,18 +110,17 @@ export async function exchangeCode(code: string): Promise<{
       code,
       client_id: process.env.SF_CLIENT_ID ?? "",
       client_secret: process.env.SF_CLIENT_SECRET ?? "",
-      redirect_uri: process.env.SF_REDIRECT_URI ?? "",
+      redirect_uri: oauthCallbackUrl(),
     }),
   });
   if (!res.ok) {
-    const txt = await res.text();
-    throw new Error(`Salesforce token exchange failed: ${res.status} ${txt}`);
+    throw new SalesforceApiError("Salesforce authorization failed. Try connecting the org again.");
   }
   return await res.json();
 }
 
-export async function refreshAccessToken(refreshToken: string): Promise<{ access_token: string; instance_url: string }> {
-  const res = await fetch(`${loginUrl()}/services/oauth2/token`, {
+export async function refreshAccessToken(baseUrl: string, refreshToken: string): Promise<{ access_token: string; instance_url?: string; issued_at?: string; expires_in?: number }> {
+  const res = await fetch(tokenEndpoint(baseUrl), {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
@@ -75,8 +131,9 @@ export async function refreshAccessToken(refreshToken: string): Promise<{ access
     }),
   });
   if (!res.ok) {
-    const txt = await res.text();
-    throw new Error(`Salesforce refresh failed: ${res.status} ${txt}`);
+    const text = await res.text().catch(() => "");
+    if (text.includes("invalid_grant")) throw new SalesforceConnectionExpiredError();
+    throw new SalesforceApiError("Salesforce session refresh failed. Reconnect your org and try again.");
   }
   return await res.json();
 }
@@ -95,20 +152,28 @@ export async function saveConnection(args: {
   orgId: string;
   orgName?: string | null;
   isSandbox: boolean;
+  issuedAt?: string;
+  expiresIn?: number;
 }): Promise<string> {
   const access = encryptToBytes(args.accessToken);
   const refresh = encryptToBytes(args.refreshToken);
+  const issuedAt = issuedAtToIso(args.issuedAt);
+  const expiresAt = expiresAtFromNow(args.expiresIn);
   const row = await queryOne<{ id: string }>(
-    `INSERT INTO salesforce_connections (user_id, instance_url, org_id, org_name, access_token_enc, refresh_token_enc, is_sandbox)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)
+    `INSERT INTO salesforce_connections
+       (user_id, instance_url, org_id, org_name, access_token_enc, refresh_token_enc, access_token_issued_at, access_token_expires_at, disconnected_at, is_sandbox)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULL, $9)
      ON CONFLICT (user_id, org_id) DO UPDATE SET
        instance_url = EXCLUDED.instance_url,
        org_name = COALESCE(EXCLUDED.org_name, salesforce_connections.org_name),
        access_token_enc = EXCLUDED.access_token_enc,
        refresh_token_enc = EXCLUDED.refresh_token_enc,
+       access_token_issued_at = EXCLUDED.access_token_issued_at,
+       access_token_expires_at = EXCLUDED.access_token_expires_at,
+       disconnected_at = NULL,
        is_sandbox = EXCLUDED.is_sandbox
      RETURNING id`,
-    [args.userId, args.instanceUrl, args.orgId, args.orgName ?? null, access, refresh, args.isSandbox],
+    [args.userId, args.instanceUrl, args.orgId, args.orgName ?? null, access, refresh, issuedAt, expiresAt, args.isSandbox],
   );
   if (!row) throw new Error("Failed to save connection");
   return row.id;
@@ -116,9 +181,10 @@ export async function saveConnection(args: {
 
 export async function getLatestConnection(userId: string): Promise<SfCredentials | null> {
   const row = await queryOne<SfConnectionRow>(
-    `SELECT id, user_id, instance_url, org_id, org_name, access_token_enc, refresh_token_enc, is_sandbox, last_scanned_at
+    `SELECT id, user_id, instance_url, org_id, org_name, access_token_enc, refresh_token_enc,
+            access_token_issued_at, access_token_expires_at, disconnected_at, is_sandbox, last_scanned_at
      FROM salesforce_connections
-     WHERE user_id = $1
+     WHERE user_id = $1 AND disconnected_at IS NULL
      ORDER BY created_at DESC
      LIMIT 1`,
     [userId],
@@ -132,6 +198,8 @@ export async function getLatestConnection(userId: string): Promise<SfCredentials
     isSandbox: row.is_sandbox,
     accessToken: decryptFromBytes(row.access_token_enc),
     refreshToken: row.refresh_token_enc ? decryptFromBytes(row.refresh_token_enc) : null,
+    accessTokenIssuedAt: row.access_token_issued_at,
+    accessTokenExpiresAt: row.access_token_expires_at,
   };
 }
 
@@ -142,23 +210,113 @@ export async function deleteConnection(userId: string, connectionId: string) {
   );
 }
 
+export async function getConnectionForDisconnect(userId: string, connectionId: string): Promise<SfCredentials | null> {
+  const row = await queryOne<SfConnectionRow>(
+    `SELECT id, user_id, instance_url, org_id, org_name, access_token_enc, refresh_token_enc,
+            access_token_issued_at, access_token_expires_at, disconnected_at, is_sandbox, last_scanned_at
+     FROM salesforce_connections WHERE user_id = $1 AND id = $2`,
+    [userId, connectionId],
+  );
+  if (!row) return null;
+  return {
+    id: row.id,
+    instanceUrl: row.instance_url,
+    orgId: row.org_id,
+    orgName: row.org_name,
+    isSandbox: row.is_sandbox,
+    accessToken: decryptFromBytes(row.access_token_enc),
+    refreshToken: row.refresh_token_enc ? decryptFromBytes(row.refresh_token_enc) : null,
+    accessTokenIssuedAt: row.access_token_issued_at,
+    accessTokenExpiresAt: row.access_token_expires_at,
+  };
+}
+
+async function updateAccessToken(connectionId: string, token: { access_token: string; instance_url?: string; issued_at?: string; expires_in?: number }) {
+  await query(
+    `UPDATE salesforce_connections
+     SET access_token_enc = $1,
+         instance_url = COALESCE($2, instance_url),
+         access_token_issued_at = $3,
+         access_token_expires_at = $4,
+         disconnected_at = NULL
+     WHERE id = $5`,
+    [
+      encryptToBytes(token.access_token),
+      token.instance_url ?? null,
+      issuedAtToIso(token.issued_at),
+      expiresAtFromNow(token.expires_in),
+      connectionId,
+    ],
+  );
+}
+
+async function markConnectionExpired(connectionId: string) {
+  await query(`UPDATE salesforce_connections SET disconnected_at = NOW() WHERE id = $1`, [connectionId]);
+}
+
+function shouldRefreshBeforeCall(creds: SfCredentials): boolean {
+  if (!creds.refreshToken || !creds.accessTokenExpiresAt) return false;
+  return new Date(creds.accessTokenExpiresAt).getTime() <= Date.now() + 60_000;
+}
+
+async function refreshConnection(creds: SfCredentials): Promise<SfCredentials> {
+  if (!creds.refreshToken) throw new SalesforceConnectionExpiredError();
+  try {
+    const token = await refreshAccessToken(creds.instanceUrl, creds.refreshToken);
+    await updateAccessToken(creds.id, token);
+    return {
+      ...creds,
+      accessToken: token.access_token,
+      instanceUrl: token.instance_url ?? creds.instanceUrl,
+      accessTokenIssuedAt: issuedAtToIso(token.issued_at),
+      accessTokenExpiresAt: expiresAtFromNow(token.expires_in),
+    };
+  } catch (err) {
+    if (err instanceof SalesforceConnectionExpiredError) await markConnectionExpired(creds.id);
+    throw err;
+  }
+}
+
+export async function revokeConnectionToken(creds: SfCredentials): Promise<void> {
+  const token = creds.refreshToken ?? creds.accessToken;
+  if (!token) return;
+  await fetch(revokeEndpoint(creds.instanceUrl), {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ token }),
+  }).catch(() => undefined);
+}
+
 export async function sfFetch(
   creds: SfCredentials,
   path: string,
   init: RequestInit = {},
 ): Promise<Response> {
-  const url = path.startsWith("http") ? path : `${creds.instanceUrl}${path}`;
-  const headers = new Headers(init.headers);
-  headers.set("Authorization", `Bearer ${creds.accessToken}`);
-  headers.set("Accept", "application/json");
-  return await fetch(url, { ...init, headers });
+  let activeCreds = creds;
+  if (shouldRefreshBeforeCall(activeCreds)) activeCreds = await refreshConnection(activeCreds);
+  const makeRequest = async (c: SfCredentials) => {
+    const url = path.startsWith("http") ? path : `${c.instanceUrl}${path}`;
+    const headers = new Headers(init.headers);
+    headers.set("Authorization", `Bearer ${c.accessToken}`);
+    headers.set("Accept", "application/json");
+    return await fetch(url, { ...init, headers });
+  };
+  let res = await makeRequest(activeCreds);
+  if (res.status === 401 && activeCreds.refreshToken) {
+    activeCreds = await refreshConnection(activeCreds);
+    res = await makeRequest(activeCreds);
+  }
+  return res;
 }
 
 export async function sfJson<T = unknown>(creds: SfCredentials, path: string, init?: RequestInit): Promise<T> {
   const res = await sfFetch(creds, path, init);
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Salesforce ${path} failed: ${res.status} ${text}`);
+    if (res.status === 401) {
+      await markConnectionExpired(creds.id);
+      throw new SalesforceConnectionExpiredError();
+    }
+    throw new SalesforceApiError();
   }
   return (await res.json()) as T;
 }
@@ -238,4 +396,3 @@ export async function runVerifyCheck(creds: SfCredentials, rule: VerifyRule): Pr
     return { ok: false, error: e instanceof Error ? e.message : "verify_failed" };
   }
 }
-
