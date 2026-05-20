@@ -17,7 +17,7 @@ export default async function MissionsPage() {
     getRecommendations(user.id),
     getSelectedUseCase(user.id),
     queryOne<{ id: string }>(
-      `SELECT id FROM salesforce_connections WHERE user_id = $1 AND disconnected_at IS NULL ORDER BY created_at DESC LIMIT 1`,
+      `SELECT id FROM salesforce_connections WHERE user_id = $1 ORDER BY last_scanned_at DESC NULLS LAST, created_at DESC LIMIT 1`,
       [user.id],
     ),
   ]);

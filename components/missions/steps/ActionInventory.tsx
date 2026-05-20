@@ -1,20 +1,19 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Step } from "@/content/types";
-import { Loader2, RefreshCw, Code2, Workflow, Plug } from "lucide-react";
+import { Loader2, Code2, Workflow, Plug, CheckCircle2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { CopyPromptButton } from "@/components/common/CopyPromptButton";
 
 type Candidate = { id: string; kind: "apex" | "flow" | "external"; name: string; meta?: string };
-
-type ScanResponse = {
-  scanned_at: string;
-  candidates: Candidate[];
-};
 
 type EvidenceShape = {
   actionInventory?: { selected: Candidate[]; lastScanAt?: string };
 };
+
+const POLL_MS = 4000;
+const POLL_TIMEOUT_MS = 5 * 60 * 1000;
 
 export function ActionInventoryStep({
   step,
@@ -28,48 +27,87 @@ export function ActionInventoryStep({
   const initial = (evidence as EvidenceShape).actionInventory;
   const [selected, setSelected] = useState<Candidate[]>(initial?.selected ?? []);
   const [candidates, setCandidates] = useState<Candidate[] | null>(null);
-  const [scanning, setScanning] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [pendingSince, setPendingSince] = useState<number | null>(null);
+  const [synced, setSynced] = useState(false);
   const [lastScanAt, setLastScanAt] = useState<string | null>(initial?.lastScanAt ?? null);
+  const pollTimer = useRef<number | null>(null);
 
-  async function runScan() {
-    setScanning(true);
-    setError(null);
+  useEffect(() => {
+    void load();
+    return () => {
+      if (pollTimer.current) window.clearTimeout(pollTimer.current);
+    };
+  }, []);
+
+  async function load(): Promise<string | null> {
     try {
-      const res = await fetch("/api/salesforce/scan", { method: "POST" });
-      const data = (await res.json().catch(() => ({}))) as { snapshot?: { code?: { invocable?: number; aura_enabled?: number; classes?: number }; integrations?: { named_credentials?: number; external_services?: number; sample?: { apex?: string[]; flows?: string[]; namedCredentials?: string[]; externalServices?: string[] } }; automation?: { flows_active?: number } }; integrations?: { sample?: unknown }; scanned_at?: string };
-      // The scanner now exposes sample names under integrations + code; we fall back to synthesising
-      // candidates from counts when a real org doesn't expose names.
-      const samples = data.snapshot?.integrations?.sample;
-      const apexNames = samples?.apex ?? [];
-      const flowNames = samples?.flows ?? [];
-      const ncNames = samples?.namedCredentials ?? [];
-      const esNames = samples?.externalServices ?? [];
+      const res = await fetch("/api/org/scan/latest");
+      const data = (await res.json()) as {
+        snapshot: {
+          code?: { invocable?: number };
+          integrations?: { named_credentials?: number; sample?: { apex?: string[]; flows?: string[]; namedCredentials?: string[]; externalServices?: string[] } };
+          automation?: { flows_active?: number };
+        } | null;
+        scanned_at?: string | null;
+      };
+
+      if (!data.snapshot) {
+        setCandidates(null);
+        return null;
+      }
+      const samples = data.snapshot.integrations?.sample;
+      const apex = samples?.apex ?? [];
+      const flows = samples?.flows ?? [];
+      const nc = samples?.namedCredentials ?? [];
+      const es = samples?.externalServices ?? [];
 
       const list: Candidate[] = [
-        ...apexNames.map((n, i) => ({ id: `apex-${i}-${n}`, kind: "apex" as const, name: n, meta: "@InvocableMethod" })),
-        ...flowNames.map((n, i) => ({ id: `flow-${i}-${n}`, kind: "flow" as const, name: n, meta: "Autolaunched Flow" })),
-        ...esNames.map((n, i) => ({ id: `es-${i}-${n}`, kind: "external" as const, name: n, meta: "External Service" })),
-        ...ncNames.map((n, i) => ({ id: `nc-${i}-${n}`, kind: "external" as const, name: n, meta: "Named Credential" })),
+        ...apex.map((n, i) => ({ id: `apex-${i}-${n}`, kind: "apex" as const, name: n, meta: "@InvocableMethod" })),
+        ...flows.map((n, i) => ({ id: `flow-${i}-${n}`, kind: "flow" as const, name: n, meta: "Autolaunched Flow" })),
+        ...es.map((n, i) => ({ id: `es-${i}-${n}`, kind: "external" as const, name: n, meta: "External Service" })),
+        ...nc.map((n, i) => ({ id: `nc-${i}-${n}`, kind: "external" as const, name: n, meta: "Named Credential" })),
       ];
 
-      // If the scanner returned counts but no names (real org doesn't expose them), synthesise placeholders.
       if (list.length === 0) {
-        const inv = data.snapshot?.code?.invocable ?? 0;
-        const flows = data.snapshot?.automation?.flows_active ?? 0;
-        const nc = data.snapshot?.integrations?.named_credentials ?? 0;
+        const inv = data.snapshot.code?.invocable ?? 0;
+        const flowCount = data.snapshot.automation?.flows_active ?? 0;
+        const ncCount = data.snapshot.integrations?.named_credentials ?? 0;
         for (let i = 0; i < inv; i++) list.push({ id: `apex-${i}`, kind: "apex", name: `InvocableClass_${i + 1}`, meta: "@InvocableMethod" });
-        for (let i = 0; i < flows; i++) list.push({ id: `flow-${i}`, kind: "flow", name: `Autolaunched_Flow_${i + 1}`, meta: "Autolaunched Flow" });
-        for (let i = 0; i < nc; i++) list.push({ id: `nc-${i}`, kind: "external", name: `NamedCred_${i + 1}`, meta: "Named Credential" });
+        for (let i = 0; i < flowCount; i++) list.push({ id: `flow-${i}`, kind: "flow", name: `Autolaunched_Flow_${i + 1}`, meta: "Autolaunched Flow" });
+        for (let i = 0; i < ncCount; i++) list.push({ id: `nc-${i}`, kind: "external", name: `NamedCred_${i + 1}`, meta: "Named Credential" });
       }
 
       setCandidates(list);
-      setLastScanAt(data.scanned_at ?? new Date().toISOString());
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "scan_failed");
+      setLastScanAt(data.scanned_at ?? null);
+      return data.scanned_at ?? null;
     } finally {
-      setScanning(false);
+      setLoading(false);
     }
+  }
+
+  function startPolling() {
+    setPendingSince(Date.now());
+    setSynced(false);
+    poll();
+  }
+
+  async function poll() {
+    if (pollTimer.current) window.clearTimeout(pollTimer.current);
+    const startedAt = pendingSince ?? Date.now();
+    if (Date.now() - startedAt > POLL_TIMEOUT_MS) {
+      setPendingSince(null);
+      return;
+    }
+    const before = lastScanAt;
+    const fresh = await load();
+    if (fresh && fresh !== before) {
+      setSynced(true);
+      setPendingSince(null);
+      window.setTimeout(() => setSynced(false), 4000);
+      return;
+    }
+    pollTimer.current = window.setTimeout(poll, POLL_MS);
   }
 
   function toggle(c: Candidate) {
@@ -86,23 +124,34 @@ export function ActionInventoryStep({
           <h2 className="text-2xl font-semibold tracking-tight">{step.title}</h2>
           {step.description && <p className="text-sm text-[var(--color-text-muted)] mt-2 max-w-2xl">{step.description}</p>}
         </div>
-        <button
-          type="button"
-          onClick={runScan}
-          disabled={scanning}
-          className="h-10 px-4 rounded-md bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50 text-white text-sm font-semibold inline-flex items-center gap-2 whitespace-nowrap shrink-0"
-        >
-          {scanning ? <><Loader2 size={14} className="animate-spin" /> Scanning</> : <><RefreshCw size={14} /> Scan org for candidates</>}
-        </button>
+        <CopyPromptButton
+          body={{ kind: "scan" }}
+          label={candidates ? "Copy re-scan prompt" : "Copy scan prompt"}
+          onCopied={startPolling}
+          className="shrink-0"
+        />
       </div>
 
-      {error && (
-        <div className="surface-card p-4 mb-4 border-[var(--color-danger)]/30 text-sm text-[var(--color-danger)]">{error}</div>
+      {pendingSince && !synced && (
+        <div className="surface-card p-3 mb-4 border-[var(--color-accent)]/30 text-sm text-[var(--color-text-muted)] inline-flex items-center gap-2">
+          <Loader2 size={14} className="animate-spin text-[var(--color-accent)]" />
+          Waiting for your coding agent to sync…
+        </div>
+      )}
+      {synced && (
+        <div className="surface-card p-3 mb-4 border-[var(--color-success)]/30 text-sm inline-flex items-center gap-2">
+          <CheckCircle2 size={14} className="text-[var(--color-success)]" />
+          Synced from your agent.
+        </div>
       )}
 
-      {candidates === null ? (
+      {loading ? (
+        <div className="surface-card p-8 text-center text-sm text-[var(--color-text-muted)] inline-flex items-center gap-2">
+          <Loader2 size={14} className="animate-spin" /> Loading inventory…
+        </div>
+      ) : candidates === null ? (
         <div className="surface-card p-8 text-center text-sm text-[var(--color-text-muted)]">
-          Click <span className="text-[var(--color-text)] font-medium">Scan org for candidates</span> to inventory your existing Apex, Flows, and External Services.
+          No org synced yet. Click <span className="text-[var(--color-text)] font-medium">Copy scan prompt</span> above and run it from your coding agent.
         </div>
       ) : candidates.length === 0 ? (
         <div className="surface-card p-8 text-center text-sm text-[var(--color-text-muted)]">

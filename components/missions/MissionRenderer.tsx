@@ -251,7 +251,7 @@ function StepBody({
     case "useCaseCapture":
       return <UseCaseCaptureStep step={step} evidence={evidence} onEvidence={onEvidence} />;
     case "knowledgeAudit":
-      return <KnowledgeAuditStep step={step} evidence={evidence} onEvidence={onEvidence} connected={connected} />;
+      return <KnowledgeAuditStep step={step} evidence={evidence} onEvidence={onEvidence} connected={connected} missionId={missionId} />;
     case "orgScanReport":
       return <OrgScanReportStep step={step} connected={connected} missionId={missionId} onEvidence={onEvidence} />;
     case "verifyInOrg":
@@ -264,7 +264,7 @@ function StepBody({
     case "richContent":
       return <RichContentStep step={step} />;
     case "setupChecklist":
-      return <SetupChecklistStep step={step} evidence={evidence} onEvidence={onEvidence} />;
+      return <SetupChecklistStep step={step} evidence={evidence} onEvidence={onEvidence} missionId={missionId} />;
     case "actionInventory":
       return <ActionInventoryStep step={step} evidence={evidence} onEvidence={onEvidence} />;
     case "channelPlanner":

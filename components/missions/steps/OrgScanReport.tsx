@@ -1,15 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Step } from "@/content/types";
-import { Loader2, RefreshCw, AlertCircle, CheckCircle2, Link as LinkIcon, ShieldCheck } from "lucide-react";
-import Link from "next/link";
+import { Loader2, AlertCircle, CheckCircle2, ShieldCheck } from "lucide-react";
+import { CopyPromptButton } from "@/components/common/CopyPromptButton";
 
 type ScanResponse = {
-  scanned_at: string;
-  is_mock: boolean;
-  is_cached?: boolean;
-  score: number;
+  scanned_at: string | null;
+  is_mock?: boolean;
+  score: number | null;
   snapshot: {
     foundations: { custom_objects: number; total_fields: number; relationships: number; record_counts: Record<string, number> };
     automation: { flows_active: number; flows_inactive: number; types: Record<string, number>; avg_complexity: number };
@@ -22,43 +21,76 @@ type ScanResponse = {
       confidence: "high" | "medium" | "low";
       probes: { area: string; label: string; status: "exact" | "partial" | "blocked"; detail: string }[];
     };
-  };
+  } | null;
   findings: { id: string; area: string; severity: "ok" | "warn" | "danger"; title: string; explain: string }[];
 };
 
+const POLL_MS = 4000;
+const POLL_TIMEOUT_MS = 5 * 60 * 1000;
+
 export function OrgScanReportStep({
   step,
-  connected,
   missionId,
   onEvidence,
 }: {
   step: Extract<Step, { kind: "orgScanReport" }>;
-  connected: boolean;
+  connected?: boolean;
   missionId: string;
   onEvidence: (patch: Record<string, unknown>) => Promise<void>;
 }) {
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<ScanResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [pendingSince, setPendingSince] = useState<number | null>(null);
+  const [synced, setSynced] = useState(false);
+  const pollTimer = useRef<number | null>(null);
 
-  async function runScan(force = false) {
-    setLoading(true);
-    setError(null);
+  useEffect(() => {
+    void load();
+    return () => {
+      if (pollTimer.current) window.clearTimeout(pollTimer.current);
+    };
+  }, []);
+
+  async function load(): Promise<ScanResponse | null> {
     try {
-      const res = await fetch("/api/salesforce/scan", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ force }),
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json?.error ?? `HTTP ${res.status}`);
+      const res = await fetch("/api/org/scan/latest");
+      const json = (await res.json()) as ScanResponse;
       setData(json);
-      await onEvidence({ orgScan: { scanned_at: json.scanned_at, score: json.score, is_mock: json.is_mock } });
+      if (json.scanned_at && json.score !== null) {
+        await onEvidence({ orgScan: { scanned_at: json.scanned_at, score: json.score, is_mock: false } });
+      }
+      return json;
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Scan failed");
+      setError(err instanceof Error ? err.message : "load_failed");
+      return null;
     } finally {
       setLoading(false);
     }
+  }
+
+  function startPolling() {
+    setPendingSince(Date.now());
+    setSynced(false);
+    poll();
+  }
+
+  async function poll() {
+    if (pollTimer.current) window.clearTimeout(pollTimer.current);
+    const startedAt = pendingSince ?? Date.now();
+    if (Date.now() - startedAt > POLL_TIMEOUT_MS) {
+      setPendingSince(null);
+      return;
+    }
+    const before = data?.scanned_at ?? null;
+    const fresh = await load();
+    if (fresh?.scanned_at && fresh.scanned_at !== before) {
+      setSynced(true);
+      setPendingSince(null);
+      window.setTimeout(() => setSynced(false), 4000);
+      return;
+    }
+    pollTimer.current = window.setTimeout(poll, POLL_MS);
   }
 
   return (
@@ -68,32 +100,25 @@ export function OrgScanReportStep({
           <h2 className="text-2xl font-semibold tracking-tight">{step.title}</h2>
           {step.description && <p className="text-sm text-[var(--color-text-muted)] mt-2 max-w-2xl">{step.description}</p>}
         </div>
-        <button
-          onClick={() => runScan(!!data)}
-          disabled={loading}
-          className="h-10 px-4 rounded-md bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50 text-white text-sm font-semibold inline-flex items-center gap-2 whitespace-nowrap shrink-0"
-        >
-          {loading ? <><Loader2 size={14} className="animate-spin" /> Scanning…</> : <><RefreshCw size={14} /> {data ? "Re-scan" : "Run scan"}</>}
-        </button>
+        <CopyPromptButton
+          body={{ kind: "scan" }}
+          label={data?.snapshot ? "Copy re-scan prompt" : "Copy scan prompt"}
+          onCopied={startPolling}
+          className="shrink-0"
+        />
       </div>
 
-      {!connected && (
-        <div className="surface-card p-5 mb-4">
-          <div className="flex items-start gap-3">
-            <LinkIcon size={18} className="text-[var(--color-accent)] mt-0.5" />
-            <div>
-              <div className="font-semibold mb-1">Connect your Salesforce org first</div>
-              <p className="text-sm text-[var(--color-text-muted)] mb-3">
-                We need read access to your org&apos;s metadata. We never write back.
-              </p>
-              <Link
-                href="/settings"
-                className="inline-flex items-center h-9 px-4 rounded-md bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-white text-sm font-semibold"
-              >
-                Connect org
-              </Link>
-            </div>
-          </div>
+      {pendingSince && !synced && (
+        <div className="surface-card p-3 mb-4 border-[var(--color-accent)]/30 text-sm text-[var(--color-text-muted)] inline-flex items-center gap-2">
+          <Loader2 size={14} className="animate-spin text-[var(--color-accent)]" />
+          Waiting for your coding agent to sync the scan…
+        </div>
+      )}
+
+      {synced && (
+        <div className="surface-card p-3 mb-4 border-[var(--color-success)]/30 text-sm inline-flex items-center gap-2">
+          <CheckCircle2 size={14} className="text-[var(--color-success)]" />
+          Synced from your agent.
         </div>
       )}
 
@@ -106,26 +131,39 @@ export function OrgScanReportStep({
         </div>
       )}
 
-      {data && <ScanResults data={data} />}
+      {loading ? (
+        <div className="surface-card p-8 text-center text-sm text-[var(--color-text-muted)] inline-flex items-center gap-2">
+          <Loader2 size={14} className="animate-spin" /> Loading latest scan…
+        </div>
+      ) : !data || !data.snapshot ? (
+        <div className="surface-card p-6">
+          <h3 className="text-sm font-semibold mb-1">No scan synced yet</h3>
+          <p className="text-sm text-[var(--color-text-muted)]">
+            Click <span className="font-medium text-[var(--color-text)]">Copy scan prompt</span> above and paste it into your coding agent. It will run the scan against your org locally and POST the results back. The report will appear here automatically.
+          </p>
+        </div>
+      ) : (
+        <ScanResults data={data as ScanResponse & { snapshot: NonNullable<ScanResponse["snapshot"]> }} />
+      )}
     </div>
   );
 }
 
-function ScanResults({ data }: { data: ScanResponse }) {
+function ScanResults({ data }: { data: ScanResponse & { snapshot: NonNullable<ScanResponse["snapshot"]> } }) {
   return (
     <div className="space-y-6">
       <div className="surface-card p-6 flex items-center justify-between">
         <div>
           <div className="text-xs uppercase tracking-[0.25em] text-[var(--color-text-muted)] mb-1">Agent readiness score</div>
-          <div className="text-5xl font-semibold tracking-tight">{data.score}<span className="text-2xl text-[var(--color-text-muted)]">/100</span></div>
+          <div className="text-5xl font-semibold tracking-tight">{data.score ?? 0}<span className="text-2xl text-[var(--color-text-muted)]">/100</span></div>
           <div className="text-xs text-[var(--color-text-subtle)] mt-2">
-            Scanned {new Date(data.scanned_at).toLocaleString()} {data.is_mock && "· Demo data (no org connected)"} {data.is_cached && "· Cached"}
+            Synced {data.scanned_at ? new Date(data.scanned_at).toLocaleString() : "—"}
           </div>
           <div className="text-xs text-[var(--color-text-subtle)] mt-1">
             Headline counts focus on org-owned metadata where Salesforce exposes ownership signals.
           </div>
         </div>
-        <ScoreRing score={data.score} />
+        <ScoreRing score={data.score ?? 0} />
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -162,7 +200,7 @@ function ScanResults({ data }: { data: ScanResponse }) {
   );
 }
 
-function ScanConfidence({ meta }: { meta: NonNullable<ScanResponse["snapshot"]["scanMeta"]> }) {
+function ScanConfidence({ meta }: { meta: NonNullable<NonNullable<ScanResponse["snapshot"]>["scanMeta"]> }) {
   const blocked = meta.probes.filter((p) => p.status === "blocked").length;
   const exact = meta.probes.filter((p) => p.status === "exact").length;
   const tone = meta.confidence === "high"

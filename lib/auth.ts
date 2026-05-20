@@ -2,6 +2,7 @@ import { cookies } from "next/headers";
 import { query, queryOne } from "./db";
 import { randomToken } from "./crypto";
 import { hashPassword, verifyPassword } from "./passwords";
+import { findUserIdByToken } from "./api-tokens";
 
 const SESSION_COOKIE = "adoptify_session";
 const SESSION_TTL_DAYS = 30;
@@ -103,4 +104,23 @@ export async function requireUser(): Promise<SessionUser> {
 
 export async function destroySession(sessionId: string) {
   await query(`DELETE FROM sessions WHERE id = $1`, [sessionId]);
+}
+
+export async function getUserFromBearer(req: Request): Promise<SessionUser | null> {
+  const auth = req.headers.get("authorization") ?? req.headers.get("Authorization");
+  if (!auth) return null;
+  const match = /^Bearer\s+(\S+)$/i.exec(auth);
+  if (!match) return null;
+  const userId = await findUserIdByToken(match[1]);
+  if (!userId) return null;
+  return await queryOne<SessionUser>(
+    `SELECT id, email, name FROM users WHERE id = $1`,
+    [userId],
+  );
+}
+
+export async function getUserFromBearerOrSession(req: Request): Promise<SessionUser | null> {
+  const fromBearer = await getUserFromBearer(req);
+  if (fromBearer) return fromBearer;
+  return await getSessionUser();
 }

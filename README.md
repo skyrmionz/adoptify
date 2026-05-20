@@ -4,9 +4,9 @@ Adoptify is a diagnostic-led Pocket FDE for Salesforce Agentforce adoption. It h
 
 ## What It Does
 
-- Connects to Salesforce with the OAuth 2.0 Device Flow (the same flow `sf org login device` uses) for production or sandbox orgs — no callback URL or client secret required.
-- Encrypts Salesforce access and refresh tokens at rest.
-- Runs a best-effort read-only org scan for objects, flows, Apex, Knowledge, Agentforce/bot metadata, permissions, Data Cloud signals, channels, and API limits.
+- Reads Salesforce orgs through each user's own coding agent (Claude Code, Cursor, etc.) — Adoptify never holds Salesforce credentials. Each user gets a per-account API token they paste (along with the auto-generated prompt) into their agent; the agent runs `sf` CLI locally and POSTs results back to Adoptify's ingest endpoints.
+- Encrypts each user's Adoptify API token at rest with AES-GCM (key derived from `AUTH_SECRET`).
+- A best-effort read-only org scan for objects, flows, Apex, Knowledge, Agentforce/bot metadata, permissions, Data Cloud signals, channels, and API limits — produced by the user's agent and validated server-side.
 - Shows scan confidence so users can see which probes were exact and which were blocked or unavailable.
 - Captures diagnostic intake answers and recommends top first-agent use cases.
 - Shows a personalized activation plan before the generic mission curriculum.
@@ -57,20 +57,21 @@ The app runs locally at `http://localhost:3000`.
 `OPENROUTER_MODEL`
 : Model id. The current default is `anthropic/claude-sonnet-4.6`.
 
-`SF_CLIENT_ID` (optional)
-: Override the OAuth client id. Defaults to `PlatformCLI` — the same public client id Salesforce CLI uses for `sf org login device` — so no Connected App is required.
+No Salesforce environment variables are required. Adoptify never authenticates to Salesforce itself.
 
-`SF_LOGIN_URL` (optional)
-: Local override for the OAuth host. Defaults to `login.salesforce.com` for production and `test.salesforce.com` for sandbox based on the button clicked.
+## How org access works
 
-## Salesforce auth
+1. Each user signs into Adoptify and visits **Settings**. Adoptify mints them an **Adoptify API token** (`adp_…`) and stores its hash + AES-GCM encrypted copy keyed to their account.
+2. The user clicks **Copy connect prompt** (or any per-mission "Copy prompt" button). Adoptify generates a fresh markdown prompt with the token embedded and copies it to the clipboard.
+3. The user pastes the prompt into a coding agent (Claude Code, Cursor, ChatGPT with shell access, etc.) on a machine that already has `sf` CLI installed and an org logged in (`sf org login web`). The agent runs SOQL/Tooling queries locally, assembles a JSON payload, and POSTs to:
+   - `POST /api/ingest/scan` — full org snapshot
+   - `POST /api/ingest/verify` — single setup-checklist rule result
+   - `POST /api/ingest/knowledge-check` — knowledge source check
+4. Adoptify validates the bearer token, scopes the write to the resolved user, stores the snapshot in `org_assessments`, and the page polling `/api/org/scan/latest` (or `/api/progress`) picks up the change automatically.
 
-Adoptify uses the OAuth 2.0 device flow with the public `PlatformCLI` client id — the same approach as `sf org login device`. There is no Connected App to create and no `client_secret`. Each user clicks Connect, sees a one-time user code, signs into their own Salesforce org at `login.salesforce.com`, and Adoptify stores the resulting tokens against their Adoptify account.
+The user's Salesforce credentials never leave their machine. Adoptify only sees the structured JSON the agent chose to POST.
 
-Caveats:
-
-- The Salesforce login screen will show "Salesforce CLI" as the requesting application.
-- Some orgs restrict which Connected Apps can request OAuth (permitted apps allowlist, IP restrictions). Users in such orgs may not be able to connect via `PlatformCLI`. To support those users, set `SF_CLIENT_ID` to the consumer key of your own Connected App and configure it as a public client with Device Flow enabled.
+To rotate a token, click **Regenerate** in Settings — any prompt already pasted into a coding agent will start returning 401, and the user re-copies a fresh prompt.
 
 ## Heroku Deployment
 
@@ -110,10 +111,10 @@ npm run start
 After deployment:
 
 1. Sign up or log in.
-2. Go to Settings.
-3. Connect a Salesforce production org or sandbox.
-4. Open Missions -> Pre-Agent Setup -> Org Details.
-5. Run Re-scan to generate a fresh org assessment.
+2. Go to Settings → grab your Adoptify API token if you want to inspect it (the prompt copy buttons embed it automatically).
+3. Click **Copy connect prompt** and paste into your coding agent on a machine with `sf` CLI authed to the target org.
+4. Wait a few seconds — your synced org appears in Settings and a fresh score lands on Missions → Pre-Agent Setup → Org Details.
+5. Open any setup-checklist or knowledge-audit step to use **Copy verify prompt** for finer-grained checks.
 6. Review headline metrics, scan confidence, and findings.
 
 ## Known Assumptions
@@ -126,14 +127,14 @@ After deployment:
 
 ## Troubleshooting
 
-`Salesforce rejected the device flow request`
-: The user's org likely blocks the `PlatformCLI` Connected App via a permitted apps allowlist or IP restriction. Either ask their admin to allow it, or set `SF_CLIENT_ID` to a custom Connected App with Device Flow enabled.
+Ingest POST returns 401
+: Token has been rotated, or the user copied a stale prompt. Have them open Settings and click any Copy-prompt button to grab a fresh one.
 
-Login code expired
-: Codes are valid for ~10 minutes. Click Connect again to request a new code.
+Coding agent hangs on `sf data query`
+: Make sure the user has run `sf org login web` and the default-org alias matches the org they want to sync. Have the agent run `sf org display --json` first.
 
 Org scan looks incomplete
-: Check the Scan confidence panel. Blocked probes usually mean the connected Salesforce user lacks access to that metadata object.
+: Check the Scan confidence panel. Blocked probes usually mean the user's `sf` CLI auth lacks Tooling API access for that object — the agent will record those as `blocked` but still ingest everything else.
 
 Heroku starts but assets are missing
 : Confirm `heroku-postbuild` completed and the `Procfile` is using `.next/standalone/server.js`.

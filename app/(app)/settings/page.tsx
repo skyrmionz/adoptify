@@ -1,6 +1,7 @@
 import { getSessionUser } from "@/lib/auth";
 import { query } from "@/lib/db";
 import { ConnectOrgPanel } from "@/components/settings/ConnectOrgPanel";
+import { ApiTokenPanel } from "@/components/settings/ApiTokenPanel";
 
 export const runtime = "nodejs";
 
@@ -19,7 +20,7 @@ export default async function SettingsPage() {
 
   const conns = await query<ConnRow>(
     `SELECT id, instance_url, org_name, is_sandbox, last_scanned_at, created_at
-     FROM salesforce_connections WHERE user_id = $1 AND disconnected_at IS NULL ORDER BY created_at DESC`,
+     FROM salesforce_connections WHERE user_id = $1 ORDER BY last_scanned_at DESC NULLS LAST, created_at DESC`,
     [user.id],
   );
 
@@ -28,7 +29,7 @@ export default async function SettingsPage() {
       <div className="mb-10">
         <div className="text-xs uppercase tracking-[0.25em] text-[var(--color-text-muted)] mb-2">Account</div>
         <h1 className="text-3xl font-semibold tracking-tight">Settings</h1>
-        <p className="text-sm text-[var(--color-text-muted)] mt-2 max-w-2xl">Manage your profile and connected Salesforce orgs.</p>
+        <p className="text-sm text-[var(--color-text-muted)] mt-2 max-w-2xl">Manage your profile, your Adoptify API token, and your synced Salesforce orgs.</p>
       </div>
 
       <section className="surface-card p-5 mb-8">
@@ -39,6 +40,7 @@ export default async function SettingsPage() {
         </div>
       </section>
 
+      <ApiTokenPanel />
       <ConnectOrgPanel connections={conns} />
     </>
   );

@@ -1,27 +1,39 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Step } from "@/content/types";
 import { Plus, Trash2, CheckCircle2, AlertCircle, Loader2 } from "lucide-react";
-import Link from "next/link";
+import { CopyPromptButton } from "@/components/common/CopyPromptButton";
 
 type Source =
   | { id: string; kind: "salesforce-knowledge"; status: "unchecked" | "checking" | "ok" | "error"; checkResult?: { count: number; sample?: string } | { error: string } }
   | { id: string; kind: "data-cloud"; status: "unchecked" | "checking" | "ok" | "error"; checkResult?: { dmoCount: number } | { error: string } }
   | { id: string; kind: "external"; name: string; url?: string; description?: string };
 
+const POLL_MS = 4000;
+const POLL_TIMEOUT_MS = 5 * 60 * 1000;
+
 export function KnowledgeAuditStep({
   step,
   evidence,
   onEvidence,
-  connected,
+  missionId,
 }: {
   step: Extract<Step, { kind: "knowledgeAudit" }>;
   evidence: Record<string, unknown>;
   onEvidence: (patch: Record<string, unknown>) => Promise<void>;
-  connected: boolean;
+  connected?: boolean;
+  missionId?: string;
 }) {
   const [sources, setSources] = useState<Source[]>(((evidence.knowledgeSources as Source[]) ?? []));
+  const [pendingId, setPendingId] = useState<string | null>(null);
+  const pollTimer = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (pollTimer.current) window.clearTimeout(pollTimer.current);
+    };
+  }, []);
 
   function persist(next: Source[]) {
     setSources(next);
@@ -43,23 +55,42 @@ export function KnowledgeAuditStep({
     persist(sources.filter((s) => s.id !== id));
   }
 
-  async function check(id: string) {
-    const target = sources.find((s) => s.id === id);
-    if (!target || target.kind === "external") return;
-    persist(sources.map((s) => (s.id === id ? ({ ...s, status: "checking" } as Source) : s)));
-    try {
-      const res = await fetch("/api/salesforce/knowledge-check", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ kind: target.kind }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data?.error ?? `HTTP ${res.status}`);
-      persist(sources.map((s) => (s.id === id ? ({ ...s, status: "ok", checkResult: data } as Source) : s)));
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Check failed";
-      persist(sources.map((s) => (s.id === id ? ({ ...s, status: "error", checkResult: { error: message } } as Source) : s)));
+  function startPollingFor(itemId: string) {
+    setPendingId(itemId);
+    poll(itemId, Date.now(), sources.find((s) => s.id === itemId));
+  }
+
+  async function poll(itemId: string, startedAt: number, before: Source | undefined) {
+    if (pollTimer.current) window.clearTimeout(pollTimer.current);
+    if (Date.now() - startedAt > POLL_TIMEOUT_MS) {
+      setPendingId(null);
+      return;
     }
+    if (!missionId) return;
+    try {
+      const res = await fetch(`/api/progress?missionId=${encodeURIComponent(missionId)}`);
+      const data = (await res.json()) as { evidence: { knowledgeSources?: Source[] } };
+      const ingestedKind = before && before.kind !== "external" ? before.kind : undefined;
+      const beforeStatus = before && before.kind !== "external" ? before.status : undefined;
+      const list = data.evidence.knowledgeSources ?? [];
+      const fresh = list.find((s) => s.id === itemId)
+        ?? list.find((s) => s.kind !== "external" && s.kind === ingestedKind && s.status === "ok");
+      const freshStatus = fresh && fresh.kind !== "external" ? fresh.status : undefined;
+      if (fresh && fresh.kind !== "external" && freshStatus !== beforeStatus) {
+        const merged = (data.evidence.knowledgeSources ?? []) as Source[];
+        // Keep external sources from local state (they aren't returned from ingest).
+        const externals = sources.filter((s) => s.kind === "external");
+        const dedup = new Map<string, Source>();
+        for (const s of merged) dedup.set(s.id, s);
+        for (const s of externals) if (!dedup.has(s.id)) dedup.set(s.id, s);
+        persist(Array.from(dedup.values()));
+        setPendingId(null);
+        return;
+      }
+    } catch {
+      /* ignore */
+    }
+    pollTimer.current = window.setTimeout(() => poll(itemId, startedAt, before), POLL_MS);
   }
 
   return (
@@ -90,14 +121,6 @@ export function KnowledgeAuditStep({
         </button>
       </div>
 
-      {!connected && sources.some((s) => s.kind !== "external") && (
-        <div className="mb-4 surface-card p-4 border-[var(--color-warning)]/30">
-          <p className="text-sm">
-            Connect your Salesforce org in <Link className="text-[var(--color-accent)] underline" href="/settings">Settings</Link> to validate Salesforce-native sources.
-          </p>
-        </div>
-      )}
-
       {sources.length === 0 ? (
         <div className="surface-card p-8 text-center">
           <p className="text-sm text-[var(--color-text-muted)]">Add at least one knowledge source to continue.</p>
@@ -105,7 +128,15 @@ export function KnowledgeAuditStep({
       ) : (
         <div className="space-y-3">
           {sources.map((s) => (
-            <SourceRow key={s.id} source={s} onCheck={() => check(s.id)} onRemove={() => remove(s.id)} onUpdate={(patch) => persist(sources.map((x) => (x.id === s.id ? ({ ...x, ...patch } as Source) : x)))} />
+            <SourceRow
+              key={s.id}
+              source={s}
+              missionId={missionId}
+              isPending={pendingId === s.id}
+              onCopy={() => startPollingFor(s.id)}
+              onRemove={() => remove(s.id)}
+              onUpdate={(patch) => persist(sources.map((x) => (x.id === s.id ? ({ ...x, ...patch } as Source) : x)))}
+            />
           ))}
         </div>
       )}
@@ -115,12 +146,16 @@ export function KnowledgeAuditStep({
 
 function SourceRow({
   source,
-  onCheck,
+  missionId,
+  isPending,
+  onCopy,
   onRemove,
   onUpdate,
 }: {
   source: Source;
-  onCheck: () => void;
+  missionId: string | undefined;
+  isPending: boolean;
+  onCopy: () => void;
   onRemove: () => void;
   onUpdate: (patch: Partial<Source>) => void;
 }) {
@@ -158,13 +193,19 @@ function SourceRow({
         </div>
       ) : (
         <div className="flex items-center gap-3 flex-wrap">
-          <button
-            onClick={onCheck}
-            disabled={source.status === "checking"}
-            className="h-9 px-3 rounded-md bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50 text-white text-sm font-semibold inline-flex items-center gap-2 whitespace-nowrap"
-          >
-            {source.status === "checking" ? <><Loader2 size={14} className="animate-spin" /> Checking…</> : "Run live check"}
-          </button>
+          {missionId && (
+            <CopyPromptButton
+              size="sm"
+              body={{ kind: "knowledge-check", sourceKind: source.kind }}
+              label="Copy live-check prompt"
+              onCopied={onCopy}
+            />
+          )}
+          {isPending && (
+            <span className="text-xs text-[var(--color-text-muted)] inline-flex items-center gap-1.5">
+              <Loader2 size={12} className="animate-spin" /> Waiting for sync…
+            </span>
+          )}
           {source.status === "ok" && source.checkResult && !("error" in source.checkResult) && (
             <span className="pill pill-success"><CheckCircle2 size={12} /> {source.kind === "salesforce-knowledge" ? `${(source.checkResult as { count: number }).count} articles` : `${(source.checkResult as { dmoCount: number }).dmoCount} DMOs`}</span>
           )}

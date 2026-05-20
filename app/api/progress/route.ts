@@ -1,9 +1,24 @@
 import { NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth";
 import { getMissionById } from "@/content";
-import { upsertProgress } from "@/lib/progress";
+import { getProgress, upsertProgress } from "@/lib/progress";
 
 export const runtime = "nodejs";
+
+export async function GET(req: Request) {
+  const user = await getSessionUser();
+  if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  const url = new URL(req.url);
+  const missionId = url.searchParams.get("missionId");
+  if (!missionId) return NextResponse.json({ error: "missionId required" }, { status: 400 });
+  const row = await getProgress(user.id, missionId);
+  return NextResponse.json({
+    status: row?.status ?? "not_started",
+    completed_at: row?.completed_at ?? null,
+    evidence: row?.evidence_json ?? {},
+    updated_at: row?.updated_at ?? null,
+  });
+}
 
 export async function POST(req: Request) {
   const user = await getSessionUser();

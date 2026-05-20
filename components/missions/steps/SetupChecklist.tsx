@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
-import type { Step, SetupCheckItem, SetupCheckVerify } from "@/content/types";
+import { useEffect, useRef, useState } from "react";
+import type { Step, SetupCheckItem } from "@/content/types";
 import { CheckCircle2, AlertCircle, Loader2, ExternalLink } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { CopyPromptButton } from "@/components/common/CopyPromptButton";
 
 type ItemResult = {
   ok: boolean;
@@ -19,61 +20,34 @@ type EvidenceShape = {
   setupChecks?: Record<string, ItemResult>;
 };
 
+const POLL_MS = 4000;
+const POLL_TIMEOUT_MS = 5 * 60 * 1000;
+
 export function SetupChecklistStep({
   step,
   evidence,
   onEvidence,
+  missionId,
 }: {
   step: Extract<Step, { kind: "setupChecklist" }>;
   evidence: Record<string, unknown>;
   onEvidence: (patch: Record<string, unknown>) => Promise<void>;
+  missionId?: string;
 }) {
   const initial = (evidence as EvidenceShape).setupChecks ?? {};
   const [checks, setChecks] = useState<Record<string, ItemResult>>(initial);
-  const [busy, setBusy] = useState<Record<string, boolean>>({});
+  const [pendingId, setPendingId] = useState<string | null>(null);
+  const pollTimer = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (pollTimer.current) window.clearTimeout(pollTimer.current);
+    };
+  }, []);
 
   function persist(next: Record<string, ItemResult>) {
     setChecks(next);
     onEvidence({ setupChecks: next });
-  }
-
-  async function runVerify(item: SetupCheckItem) {
-    if (item.verify.kind === "manual") {
-      const next = {
-        ...checks,
-        [item.id]: { ok: !checks[item.id]?.ok, manual: true, verifiedAt: new Date().toISOString() },
-      };
-      persist(next);
-      return;
-    }
-    setBusy((b) => ({ ...b, [item.id]: true }));
-    try {
-      const res = await fetch("/api/salesforce/check", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ verify: item.verify }),
-      });
-      const data = (await res.json().catch(() => ({}))) as { ok?: boolean; count?: number; sample?: string; error?: string };
-      const next = {
-        ...checks,
-        [item.id]: {
-          ok: !!data.ok,
-          count: data.count,
-          sample: data.sample,
-          error: data.error,
-          verifiedAt: new Date().toISOString(),
-        },
-      };
-      persist(next);
-    } catch (err) {
-      const next = {
-        ...checks,
-        [item.id]: { ok: false, error: err instanceof Error ? err.message : "verify_failed", verifiedAt: new Date().toISOString() },
-      };
-      persist(next);
-    } finally {
-      setBusy((b) => ({ ...b, [item.id]: false }));
-    }
   }
 
   function markManually(item: SetupCheckItem, ok: boolean) {
@@ -82,6 +56,33 @@ export function SetupChecklistStep({
       [item.id]: { ok, manual: true, verifiedAt: new Date().toISOString() },
     };
     persist(next);
+  }
+
+  function startPollingFor(itemId: string) {
+    setPendingId(itemId);
+    poll(itemId, Date.now());
+  }
+
+  async function poll(itemId: string, startedAt: number) {
+    if (pollTimer.current) window.clearTimeout(pollTimer.current);
+    if (Date.now() - startedAt > POLL_TIMEOUT_MS) {
+      setPendingId(null);
+      return;
+    }
+    if (!missionId) return;
+    try {
+      const res = await fetch(`/api/progress?missionId=${encodeURIComponent(missionId)}`);
+      const data = (await res.json()) as { evidence: { setupChecks?: Record<string, ItemResult> } };
+      const fresh = data.evidence.setupChecks?.[itemId];
+      if (fresh && fresh.verifiedAt && fresh.verifiedAt !== checks[itemId]?.verifiedAt) {
+        setChecks((c) => ({ ...c, [itemId]: fresh }));
+        setPendingId(null);
+        return;
+      }
+    } catch {
+      /* ignore */
+    }
+    pollTimer.current = window.setTimeout(() => poll(itemId, startedAt), POLL_MS);
   }
 
   const total = step.items.length;
@@ -100,7 +101,7 @@ export function SetupChecklistStep({
       <div className="space-y-3">
         {step.items.map((item) => {
           const r = checks[item.id];
-          const isBusy = busy[item.id];
+          const isPending = pendingId === item.id;
           const verifyKind = item.verify.kind;
           return (
             <div key={item.id} className="surface-card p-4">
@@ -129,16 +130,30 @@ export function SetupChecklistStep({
                   {r?.manual && r?.ok && (
                     <div className="text-[11px] text-[var(--color-text-subtle)] mt-1">Marked manually</div>
                   )}
+                  {isPending && (
+                    <div className="text-xs text-[var(--color-text-muted)] mt-1 inline-flex items-center gap-1.5">
+                      <Loader2 size={12} className="animate-spin" /> Waiting for your agent to sync the result…
+                    </div>
+                  )}
                   <div className="flex items-center flex-wrap gap-2 mt-3">
-                    {verifyKind !== "manual" && (
-                      <button
-                        type="button"
-                        onClick={() => runVerify(item)}
-                        disabled={isBusy}
-                        className="h-8 px-3 rounded-md bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50 text-white text-xs font-semibold inline-flex items-center gap-2 whitespace-nowrap"
-                      >
-                        {isBusy ? <><Loader2 size={12} className="animate-spin" /> Checking</> : "Verify in org"}
-                      </button>
+                    {verifyKind !== "manual" && verifyKind !== "scanner.path" && missionId && (
+                      <CopyPromptButton
+                        size="sm"
+                        body={{
+                          kind: "verify",
+                          ruleId: item.id,
+                          missionId,
+                          ruleLabel: item.label,
+                          rule: item.verify,
+                        }}
+                        label="Copy verify prompt"
+                        onCopied={() => startPollingFor(item.id)}
+                      />
+                    )}
+                    {verifyKind === "scanner.path" && (
+                      <span className="text-xs text-[var(--color-text-muted)]">
+                        Auto-evaluated from your latest synced scan.
+                      </span>
                     )}
                     <button
                       type="button"

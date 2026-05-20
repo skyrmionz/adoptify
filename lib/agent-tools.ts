@@ -2,9 +2,10 @@ import type { ToolDef } from "./openrouter";
 import { sections, getMissionById } from "@/content";
 import { getAllProgress, upsertProgress } from "./progress";
 import { query, queryOne } from "./db";
-import { API_VERSION, getLatestConnection, sfJson } from "./salesforce";
-import { runScan } from "./metadata-scanner";
+import { getLatestSnapshot } from "./snapshot-store";
 import { buildActivationPlan, getDiagnostic, getSelectedUseCase } from "./diagnostic";
+import { buildScanPrompt } from "./prompts";
+import { getOrMintRawToken } from "./api-tokens";
 
 export const agentTools: ToolDef[] = [
   // --- Read: Pocket FDE diagnostic ---
@@ -125,19 +126,18 @@ export const agentTools: ToolDef[] = [
     },
   },
 
-  // --- Read: Salesforce org ---
+  // --- Read: Salesforce snapshot (ingested by the user's coding agent) ---
   {
     type: "function",
     function: {
-      name: "sf_query",
-      description: "Run a read-only SOQL query against the user's connected Salesforce org. Specify api='tooling' for setup/metadata objects (BotDefinition, Flow, ApexClass, etc.) or api='rest' for data objects (Account, Knowledge__kav, MessagingSession). Read-only: no DML, no Apex, no deploys. Returns at most 200 rows.",
+      name: "lookup_snapshot",
+      description: "Read a value from the user's most recently ingested Salesforce snapshot using a dot-path. Adoptify does not query Salesforce directly anymore — the user's coding agent ingests snapshots via /api/ingest/scan. Returns the value at the path, or { error: 'no_snapshot' } if the user hasn't synced yet. Examples of paths: 'foundations.custom_objects', 'agents.bots', 'integrations.sample.apex', 'access.ai_permission_sets'.",
       parameters: {
         type: "object",
         properties: {
-          soql: { type: "string", description: "The SOQL query. SELECT only. Must include LIMIT or you'll be capped at 200." },
-          api: { type: "string", enum: ["tooling", "rest"], description: "Which API to hit." },
+          path: { type: "string", description: "Dot-path into the snapshot. See lib/metadata-scanner.ts Snapshot type for the full shape." },
         },
-        required: ["soql", "api"],
+        required: ["path"],
         additionalProperties: false,
       },
     },
@@ -145,14 +145,9 @@ export const agentTools: ToolDef[] = [
   {
     type: "function",
     function: {
-      name: "sf_describe",
-      description: "Describe a Salesforce object's fields. Useful for figuring out what fields exist before composing a sf_query.",
-      parameters: {
-        type: "object",
-        properties: { objectName: { type: "string", description: "API name, e.g. 'Account', 'Knowledge__kav', 'BotDefinition'." } },
-        required: ["objectName"],
-        additionalProperties: false,
-      },
+      name: "list_snapshot_keys",
+      description: "List the top-level sections of the latest ingested snapshot (e.g. 'foundations', 'automation', 'agents'). Use this when you don't know what to ask for.",
+      parameters: { type: "object", properties: {}, additionalProperties: false },
     },
   },
 
@@ -199,8 +194,8 @@ export const agentTools: ToolDef[] = [
   {
     type: "function",
     function: {
-      name: "run_org_scan",
-      description: "Trigger a fresh Salesforce metadata scan and store the new snapshot. The user will see updated readiness on Analytics + Progress.",
+      name: "get_scan_prompt",
+      description: "Return the exact prompt the user should paste into their coding agent (Claude Code, Cursor, etc.) to scan their Salesforce org and sync the results back to Adoptify. Adoptify itself can't run the scan — the user's local agent does, using their `sf` CLI auth, and POSTs the JSON to /api/ingest/scan. The returned prompt has the user's API token embedded.",
       parameters: { type: "object", properties: {}, additionalProperties: false },
     },
   },
@@ -235,14 +230,17 @@ const APP_LINKS = {
   settings: "/settings",
 } as const;
 
-function isReadOnlySoql(soql: string): { ok: boolean; reason?: string } {
-  const trimmed = soql.trim();
-  const upper = trimmed.toUpperCase();
-  if (!upper.startsWith("SELECT")) return { ok: false, reason: "Only SELECT queries are allowed." };
-  for (const banned of ["INSERT ", "UPDATE ", "DELETE ", "UPSERT ", "MERGE "]) {
-    if (upper.includes(banned)) return { ok: false, reason: `'${banned.trim()}' is not allowed.` };
+function readJsonPath(obj: unknown, path: string): unknown {
+  const parts = path.split(".");
+  let cur: unknown = obj;
+  for (const p of parts) {
+    if (cur && typeof cur === "object" && p in (cur as Record<string, unknown>)) {
+      cur = (cur as Record<string, unknown>)[p];
+    } else {
+      return undefined;
+    }
   }
-  return { ok: true };
+  return cur;
 }
 
 export async function executeTool(name: string, rawArgs: unknown, ctx: ToolHandlerArgs): Promise<unknown> {
@@ -360,41 +358,28 @@ export async function executeTool(name: string, rawArgs: unknown, ctx: ToolHandl
       return row?.evidence_json?.promptTemplates ?? [];
     }
 
-    case "sf_query": {
-      const soql = String(args.soql ?? "");
-      const api = String(args.api ?? "rest");
-      const guard = isReadOnlySoql(soql);
-      if (!guard.ok) return { error: guard.reason };
-      const conn = await getLatestConnection(ctx.userId);
-      if (!conn) return { error: "No Salesforce org connected. Direct the user to /settings to connect one." };
-      try {
-        const path = api === "tooling"
-          ? `/services/data/${API_VERSION}/tooling/query?q=${encodeURIComponent(soql)}`
-          : `/services/data/${API_VERSION}/query?q=${encodeURIComponent(soql)}`;
-        const r = await sfJson<{ totalSize: number; done: boolean; records: Array<Record<string, unknown>> }>(conn, path);
-        const records = (r.records ?? []).slice(0, 200);
-        return { totalSize: r.totalSize, recordsReturned: records.length, records };
-      } catch (e) {
-        return { error: e instanceof Error ? e.message : "query_failed" };
-      }
-    }
-    case "sf_describe": {
-      const obj = String(args.objectName ?? "");
-      const conn = await getLatestConnection(ctx.userId);
-      if (!conn) return { error: "No Salesforce org connected." };
-      try {
-        const r = await sfJson<{ name: string; label: string; fields: Array<{ name: string; label: string; type: string; custom: boolean; nillable: boolean; referenceTo?: string[] }> }>(
-          conn,
-          `/services/data/${API_VERSION}/sobjects/${encodeURIComponent(obj)}/describe`,
-        );
+    case "lookup_snapshot": {
+      const path = String(args.path ?? "");
+      if (!path) return { error: "path is required" };
+      const latest = await getLatestSnapshot(ctx.userId);
+      if (!latest) {
         return {
-          name: r.name,
-          label: r.label,
-          fields: r.fields.map((f) => ({ name: f.name, label: f.label, type: f.type, custom: f.custom, nillable: f.nillable, referenceTo: f.referenceTo })),
+          error: "no_snapshot",
+          hint: "Use get_scan_prompt to give the user a prompt that syncs their org to Adoptify, then ask again.",
         };
-      } catch (e) {
-        return { error: e instanceof Error ? e.message : "describe_failed" };
       }
+      const value = readJsonPath(latest.snapshot, path);
+      return { path, value, scanned_at: latest.scanned_at };
+    }
+    case "list_snapshot_keys": {
+      const latest = await getLatestSnapshot(ctx.userId);
+      if (!latest) return { error: "no_snapshot" };
+      return {
+        scanned_at: latest.scanned_at,
+        score: latest.score,
+        sections: Object.keys(latest.snapshot),
+        findings_count: latest.findings.length,
+      };
     }
 
     case "mark_mission_complete": {
@@ -429,27 +414,15 @@ export async function executeTool(name: string, rawArgs: unknown, ctx: ToolHandl
       }
       return { ok: true, sectionSlug: slug, missionsMarked: updated.length };
     }
-    case "run_org_scan": {
-      const conn = await getLatestConnection(ctx.userId);
-      if (!conn) return { error: "No Salesforce org connected. Direct the user to /settings to connect one before scanning." };
-      try {
-        const result = await runScan(conn);
-        await query(
-          `INSERT INTO org_assessments (connection_id, user_id, snapshot_json, score, findings_json)
-           VALUES ($1, $2, $3::jsonb, $4, $5::jsonb)`,
-          [conn.id, ctx.userId, JSON.stringify(result.snapshot), result.score, JSON.stringify(result.findings)],
-        );
-        await query(`UPDATE salesforce_connections SET last_scanned_at = NOW() WHERE id = $1`, [conn.id]);
-        return {
-          ok: true,
-          score: result.score,
-          scanned_at: result.scanned_at,
-          byChapter: result.byChapter,
-          findingsCount: result.findings.length,
-        };
-      } catch (e) {
-        return { error: e instanceof Error ? e.message : "scan_failed" };
-      }
+    case "get_scan_prompt": {
+      const { raw } = await getOrMintRawToken(ctx.userId);
+      const appUrl = process.env.APP_URL ?? "http://localhost:3000";
+      const prompt = buildScanPrompt({ apiToken: raw, appUrl });
+      return {
+        ok: true,
+        prompt,
+        instructions: "Hand the prompt to the user verbatim and tell them to paste it into their coding agent (Claude Code, Cursor, etc.). The agent will run the scan locally and POST the result to /api/ingest/scan; the page will pick up the new snapshot automatically.",
+      };
     }
 
     case "navigate": {

@@ -13,7 +13,7 @@ export default async function AppShellLayout({ children }: { children: React.Rea
 
   const conn = await queryOne<{ org_name: string | null; instance_url: string }>(
     `SELECT org_name, instance_url FROM salesforce_connections
-     WHERE user_id = $1 AND disconnected_at IS NULL ORDER BY created_at DESC LIMIT 1`,
+     WHERE user_id = $1 ORDER BY last_scanned_at DESC NULLS LAST, created_at DESC LIMIT 1`,
     [user.id],
   );
   const orgName = conn?.org_name ?? (conn?.instance_url ? new URL(conn.instance_url).hostname : undefined);

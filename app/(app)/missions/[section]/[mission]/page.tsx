@@ -25,7 +25,7 @@ export default async function MissionPage(props: { params: Promise<Params> }) {
     getProgress(user.id, mission.id),
     getAllProgress(user.id),
     queryOne<{ id: string; instance_url: string }>(
-      `SELECT id, instance_url FROM salesforce_connections WHERE user_id = $1 AND disconnected_at IS NULL ORDER BY created_at DESC LIMIT 1`,
+      `SELECT id, instance_url FROM salesforce_connections WHERE user_id = $1 ORDER BY last_scanned_at DESC NULLS LAST, created_at DESC LIMIT 1`,
       [user.id],
     ),
   ]);

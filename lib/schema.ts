@@ -25,19 +25,27 @@ export const ensureSchemaSql = `
     instance_url       TEXT NOT NULL,
     org_id             TEXT NOT NULL,
     org_name           TEXT,
-    access_token_enc   BYTEA NOT NULL,
-    refresh_token_enc  BYTEA,
-    access_token_issued_at TIMESTAMPTZ,
-    access_token_expires_at TIMESTAMPTZ,
-    disconnected_at    TIMESTAMPTZ,
     is_sandbox         BOOLEAN NOT NULL DEFAULT FALSE,
     last_scanned_at    TIMESTAMPTZ,
     created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE(user_id, org_id)
   );
-  ALTER TABLE salesforce_connections ADD COLUMN IF NOT EXISTS access_token_issued_at TIMESTAMPTZ;
-  ALTER TABLE salesforce_connections ADD COLUMN IF NOT EXISTS access_token_expires_at TIMESTAMPTZ;
-  ALTER TABLE salesforce_connections ADD COLUMN IF NOT EXISTS disconnected_at TIMESTAMPTZ;
+  ALTER TABLE salesforce_connections DROP COLUMN IF EXISTS access_token_enc;
+  ALTER TABLE salesforce_connections DROP COLUMN IF EXISTS refresh_token_enc;
+  ALTER TABLE salesforce_connections DROP COLUMN IF EXISTS access_token_issued_at;
+  ALTER TABLE salesforce_connections DROP COLUMN IF EXISTS access_token_expires_at;
+  ALTER TABLE salesforce_connections DROP COLUMN IF EXISTS disconnected_at;
+
+  CREATE TABLE IF NOT EXISTS api_tokens (
+    user_id     UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    token_hash  BYTEA NOT NULL,
+    token_enc   BYTEA NOT NULL,
+    last_four   TEXT NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_used_at TIMESTAMPTZ
+  );
+  ALTER TABLE api_tokens ADD COLUMN IF NOT EXISTS token_enc BYTEA;
+  CREATE INDEX IF NOT EXISTS api_tokens_hash_idx ON api_tokens(token_hash);
 
   CREATE TABLE IF NOT EXISTS mission_progress (
     user_id       UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
